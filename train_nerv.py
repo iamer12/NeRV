@@ -22,6 +22,10 @@ from tqdm import tqdm
 from model_nerv import CustomDataSet, Generator
 from utils import *
 
+#To allow limited range of tested data
+from torch.utils.data import Subset
+
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -277,11 +281,44 @@ def train(local_rank, args):
     train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batchSize, shuffle=(train_sampler is None),
          num_workers=args.workers, pin_memory=True, sampler=train_sampler, drop_last=True, worker_init_fn=worker_init_fn)
 
-    val_dataset = DataSet(val_data_dir, img_transforms, vid_list=args.vid, frame_gap=args.test_gap,  )
-    val_sampler = torch.utils.data.distributed.DistributedSampler(val_dataset) if args.distributed else None
-    val_dataloader = torch.utils.data.DataLoader(val_dataset, batch_size=args.batchSize,  shuffle=False,
-         num_workers=args.workers, pin_memory=True, sampler=val_sampler, drop_last=False, worker_init_fn=worker_init_fn)
+    # val_dataset = DataSet(val_data_dir, img_transforms, vid_list=args.vid, frame_gap=args.test_gap,  )
+    # val_sampler = torch.utils.data.distributed.DistributedSampler(val_dataset) if args.distributed else None
+    # val_dataloader = torch.utils.data.DataLoader(val_dataset, batch_size=args.batchSize,  shuffle=False,
+    #      num_workers=args.workers, pin_memory=True, sampler=val_sampler, drop_last=False, worker_init_fn=worker_init_fn)
+    # data_size = len(train_dataset)
+
+
+##############################
+
+    # Limiting the range of the input images to be tested/validated
+    # Create full val_dataset
+    val_dataset = DataSet(val_data_dir, img_transforms, vid_list=args.vid, frame_gap=args.test_gap)
+    # Limit to first 20 samples
+    val_indices = list(range(min(20, len(val_dataset))))  # Just in case dataset has fewer than 20
+    val_dataset = Subset(val_dataset, val_indices)
+
+    # Sampler for subset (note: DistributedSampler is usually incompatible with Subset for fixed indices)
+    val_sampler = None  # Disable sampler when using subset
+
+
+
+    # Dataloader
+    val_dataloader = torch.utils.data.DataLoader(
+        val_dataset,
+        batch_size=args.batchSize,
+        shuffle=False,
+        num_workers=args.workers,
+        pin_memory=True,
+        sampler=val_sampler,
+        drop_last=False,
+        worker_init_fn=worker_init_fn
+    )
     data_size = len(train_dataset)
+
+##############################
+
+
+
 
     if args.eval_only:
         print('Evaluation ...')

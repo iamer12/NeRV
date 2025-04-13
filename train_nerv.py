@@ -208,13 +208,17 @@ def train(local_rank, args):
     elif args.ngpus_per_node > 1:
         model = torch.nn.DataParallel(model).cuda() #model.cuda() #
     else:
-        model = model.cuda()
+        # Hossam
+        # model = model.cuda()
+        model = model.cpu()
 
     optimizer = optim.Adam(model.parameters(), betas=(args.beta, 0.999))
 
     # resume from args.weight
     checkpoint = None
-    loc = 'cuda:{}'.format(local_rank if local_rank is not None else 0)
+    # Hossam
+    # loc = 'cuda:{}'.format(local_rank if local_rank is not None else 0)
+    loc = 'cpu'
     if args.weight != 'None':
         print("=> loading checkpoint '{}'".format(args.weight))
         checkpoint_path = args.weight
@@ -486,7 +490,10 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
             data = data.cuda(local_rank, non_blocking=True)
             embed_input = embed_input.cuda(local_rank, non_blocking=True)
         else:
-            data,  embed_input = data.cuda(non_blocking=True), embed_input.cuda(non_blocking=True)
+            # data,  embed_input = data.cuda(non_blocking=True), embed_input.cuda(non_blocking=True)
+            # Hossam
+            data, embed_input = data.cpu(), embed_input.cpu()
+
 
         # compute psnr and msssim
         fwd_num = 10 if args.eval_fps else 1
@@ -495,7 +502,9 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
             # model = model.half()
             start_time = datetime.now()
             output_list = model(embed_input)
-            torch.cuda.synchronize()
+            
+            # Hossam comment the line after
+            # torch.cuda.synchronize()
             # torch.cuda.current_stream().synchronize()
             time_list.append((datetime.now() - start_time).total_seconds())
 

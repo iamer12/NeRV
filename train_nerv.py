@@ -484,8 +484,7 @@ def train(local_rank, args):
 def evaluate(model, val_dataloader, pe, local_rank, args):
     
     # Model Quantization
-    
-    #for layer_index in range(1, args.num_prec_layers+1): # for base layer and every enhancement layer
+    #--------------------
         
     if args.quant_bit != -1:
         cur_ckt = model.state_dict()
@@ -493,34 +492,30 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
         quant_weitht_list = []
         for k,v in cur_ckt.items():
             large_tf = (v.dim() in {2,4} and 'bias' not in k)
-            
             # snerv
+            # The core scalabilty process takes place here
             #############################
+            for layer_index in range(1, args.num_prec_layers+1): # for base layer and every enhancement layer
+
+                if layer_index == 1:
+                    layer_v = v                 # highest quality/full precision tensor
+                else:
+                    layer_v = v - cur_ckt[k]    # delta between highest quality/full precision tensor, and the latest tensor uptil last enhancement layer
+
+                #-#-#-#-#-#-#-#-#-#-#-#-
+                quant_v, new_v = quantize_per_tensor(layer_v, args.quant_bit/(args.qratio_prec_layers ** (layer_index-1)), args.quant_axis if large_tf else -1)
+                #-#-#-#-#-#-#-#-#-#-#-#-
+
+                if layer_index == 1:
+                    cur_ckt[k] = new_v
+                else:
+                    cur_ckt[k] = cur_ckt[k] + new_v # include/accumulate enhancement layer(s)
 
 
-            #for layer_index in range(1, args.num_prec_layers+1): # for base layer and every enhancement layer
-
-                
-            if args.num_prec_layers >= 1:
-                quant_v, new_v = quantize_per_tensor(v, args.quant_bit, args.quant_axis if large_tf else -1)
-                cur_ckt[k] = new_v
-            if args.num_prec_layers >= 2:
-                quant_v_L2, new_v_L2 = quantize_per_tensor(v-new_v, args.quant_bit, args.quant_axis if large_tf else -1)
-                new_v_acc = new_v + new_v_L2
-                cur_ckt[k] = new_v_acc  # include enhancement layer(s)
-            
-            
-        
-            if args.num_prec_layers >= 1:
                 valid_quant_v = quant_v[v!=0] # only include non-zero weights
                 quant_weitht_list.append(valid_quant_v.flatten())
-            
-            
-            if args.num_prec_layers >= 2:
-                valid_quant_v_L2 = quant_v_L2[v!=0] # only include non-zero weights
-                quant_weitht_list.append(valid_quant_v_L2.flatten())
-            #############################
 
+            #############################
 
         cat_param = torch.cat(quant_weitht_list)
         input_code_list = cat_param.tolist()
@@ -604,7 +599,6 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
                 f.write(print_str + '\n')
 
 
-
         print_str = f'bpp after pruning and quantization to {args.quant_bit} bits: {bpp_bits_per_pixel_quant}'
         print(print_str)
         if local_rank in [0, None]:
@@ -644,19 +638,6 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
             with open('{}/eval.txt'.format(args.outf), 'a') as f:
                 f.write(print_str + '\n')
 
-
-        # print_str = f'Entropy encoding efficiency for bit {args.quant_bit}: {encoding_efficiency}'
-        # print(print_str)
-        # if local_rank in [0, None]:
-        #     with open('{}/eval.txt'.format(args.outf), 'a') as f:
-        #         f.write(print_str + '\n')
-
-        # #bpp based on the forumla on original git (I do not quite agree)
-        # print_str = f'bpp per original git formula for bit {args.quant_bit}: {len(input_code_list)*(1-args.prune_ratio)*args.quant_bit/total_number_of_pixels_per_video_sequence}'
-        # print(print_str)
-        # if local_rank in [0, None]:
-        #     with open('{}/eval.txt'.format(args.outf), 'a') as f:
-        #         f.write(print_str + '\n')
         
 
         ###########################################
@@ -666,7 +647,6 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
 
         # import pdb; pdb.set_trace; from IPython import embed; embed()
 
-    
     
     #################################################################################
     

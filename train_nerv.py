@@ -39,6 +39,14 @@ def main():
     parser.add_argument('--test_gap', default=1, type=int, help='evaluation gap')
 
 # NERV architecture parameters
+    
+    # snerv
+    parser.add_argument('--num_frames', type=int, default=132, help='number of frames to be used for testing/validation/evaluation')
+
+    # snerv linear parameters
+    parser.add_argument('--num_prec_layers', type=int, default=1, help='number of precision layers - default is 1 (i.e., only base) layer')
+    parser.add_argument('--qratio_prec_layers', type=int, default=1, help='ratio between quant_bit of successive precision layers - default is 1 (i.e., base layer and all enhancement layers have the same quant_bit')
+
     # embedding parameters
     parser.add_argument('--embed', type=str, default='1.25_80', help='base value/embed length for position encoding')
 
@@ -81,7 +89,8 @@ def main():
 
     # pruning paramaters
     parser.add_argument('--prune_steps', type=float, nargs='+', default=[0.,], help='prune steps')
-    parser.add_argument('--prune_ratio', type=float, default=1.0, help='pruning ratio')
+    #parser.add_argument('--prune_ratio', type=float, default=1.0, help='pruning ratio')
+    parser.add_argument('--prune_ratio', type=float, default=0.0, help='pruning ratio') #default is no sparsity, unless otherwise specified
 
     # distribute learning parameters
     parser.add_argument('--manualSeed', type=int, default=1, help='manual seed')
@@ -212,7 +221,8 @@ def train(local_rank, args):
     elif args.ngpus_per_node > 1:
         model = torch.nn.DataParallel(model).cuda() #model.cuda() #
     else:
-        # Hossam
+        # snerv
+        # Replacing nvidia cuda with cpu
         # model = model.cuda()
         model = model.cpu()
 
@@ -220,7 +230,8 @@ def train(local_rank, args):
 
     # resume from args.weight
     checkpoint = None
-    # Hossam
+    # snerv
+    # Replacing nvidia cuda with cpu
     # loc = 'cuda:{}'.format(local_rank if local_rank is not None else 0)
     loc = 'cpu'
     if args.weight != 'None':
@@ -237,6 +248,7 @@ def train(local_rank, args):
         else:
             model.load_state_dict(new_ckt)
         print("=> loaded checkpoint '{}' (epoch {})".format(args.weight, checkpoint['epoch']))        
+
 
     # resume from model_latest
     checkpoint_path = os.path.join(args.outf, 'model_latest.pth')
@@ -290,11 +302,14 @@ def train(local_rank, args):
 
 ##############################
 
+    # snerv
+
     # Limiting the range of the input images to be tested/validated
     # Create full val_dataset
     val_dataset = DataSet(val_data_dir, img_transforms, vid_list=args.vid, frame_gap=args.test_gap)
     # Limit to first 20 samples
-    val_indices = list(range(min(20, len(val_dataset))))  # Just in case dataset has fewer than 20
+    #val_indices = list(range(min(20, len(val_dataset))))  # Just in case dataset has fewer than 20
+    val_indices = list(range(min(args.num_frames, len(val_dataset))))  # Just in case dataset has fewer than requested number of frames
     val_dataset = Subset(val_dataset, val_indices)
 
     # Sampler for subset (note: DistributedSampler is usually incompatible with Subset for fixed indices)
@@ -333,7 +348,10 @@ def train(local_rank, args):
             print_str += f'Model sparsity at Epoch{args.start_epoch}: {sparisity_num / 1e6 / total_params}\n'
 
         # import pdb; pdb.set_trace; from IPython import embed; embed()
+        ##############################################
         val_psnr, val_msssim = evaluate(model, val_dataloader, PE, local_rank, args)
+        ##############################################
+
         print_str += f'PSNR/ms_ssim on validate set for bit {args.quant_bit} with axis {args.quant_axis}: {round(val_psnr.item(),2)}/{round(val_msssim.item(),4)}'
         print(print_str)
         with open('{}/eval.txt'.format(args.outf), 'a') as f:
@@ -473,21 +491,107 @@ def train(local_rank, args):
 @torch.no_grad()
 def evaluate(model, val_dataloader, pe, local_rank, args):
     # Model Quantization
+    
+
+    #for layer_index in range(1, args.num_prec_layers+1): # for base layer and every enhancement layer
+        
+
     if args.quant_bit != -1:
         cur_ckt = model.state_dict()
         from dahuffman import HuffmanCodec
         quant_weitht_list = []
         for k,v in cur_ckt.items():
             large_tf = (v.dim() in {2,4} and 'bias' not in k)
-            quant_v, new_v = quantize_per_tensor(v, args.quant_bit, args.quant_axis if large_tf else -1)
-            valid_quant_v = quant_v[v!=0] # only include non-zero weights
-            quant_weitht_list.append(valid_quant_v.flatten())
-            cur_ckt[k] = new_v
+            
+            #############################
+            if args.num_prec_layers >= 1:
+                quant_v, new_v = quantize_per_tensor(v, args.quant_bit, args.quant_axis if large_tf else -1)
+                cur_ckt[k] = new_v
+            if args.num_prec_layers >= 2:
+                quant_v_L2, new_v_L2 = quantize_per_tensor(v-new_v, args.quant_bit, args.quant_axis if large_tf else -1)
+                new_v_acc = new_v + new_v_L2
+                cur_ckt[k] = new_v_acc  # include enhancement layer(s)
+            #############################
+
+            # quant_v, new_v = quantize_per_tensor(layer_v, args.quant_bit/(args.qratio_prec_layers ** (layer_index-1)), args.quant_axis if large_tf else -1)
+            # quant_v, new_v = quantize_per_tensor((v - acc_new_v), args.quant_bit/(args.qratio_prec_layers ** (layer_index-1)), args.quant_axis if large_tf else -1)
+            # acc_new_v += new_v
+            # acc_quant_v += quant_v
+            
+            # new_v = acc_new_v
+            # quant_v = acc_quant_v
+            #############################
+
+            
+            # valid_quant_v = quant_v[v!=0] # only include non-zero weights
+            # quant_weitht_list.append(valid_quant_v.flatten())
+            # cur_ckt[k] = new_v
+
+            if args.num_prec_layers >= 1:
+                valid_quant_v = quant_v[v!=0] # only include non-zero weights
+                quant_weitht_list.append(valid_quant_v.flatten())
+            
+            
+            # snerv
+            if args.num_prec_layers >= 2:
+                valid_quant_v_L2 = quant_v_L2[v!=0] # only include non-zero weights
+                quant_weitht_list.append(valid_quant_v_L2.flatten())
+
+
+
         cat_param = torch.cat(quant_weitht_list)
         input_code_list = cat_param.tolist()
         unique, counts = np.unique(input_code_list, return_counts=True)
         num_freq = dict(zip(unique, counts))
 
+
+
+
+        #snerv
+        # Get a batch of data from the val_dataloader
+        data_iter = iter(val_dataloader)
+        inputs, *_ = next(data_iter)  # Assuming inputs are the first returned item
+        
+        # Get input properties
+        dtype = inputs.dtype
+        # Check the shape
+        # print("Input shape:", inputs.shape)
+
+        # Number of pixels per frame (height x width)
+        # Number of channels = 3 (for RGB)
+        _, channels, height, width = inputs.shape
+
+        # Bits per channel based on dtype
+        #bits_per_channel = torch.finfo(dtype).bits if dtype.is_floating_point else torch.iinfo(dtype).bits
+
+        # Total bits per pixel (across all channels)
+        # bits_per_pixel = channels * bits_per_channel
+
+        total_number_of_pixels_per_frame = height * width
+        #print(f"Total values per frame (with channels): {num_total_values}")
+        #total_number_of_bits_per_frame = total_number_of_pixels_per_frame * bits_per_pixel
+
+
+        #snerv
+        #total_number_of_frames = len(val_indices)
+        # total_number_of_bits_per_video_sequence = total_number_of_frames * total_number_of_bits_per_frame
+
+        total_number_of_pixels_per_video_sequence = args.num_frames * total_number_of_pixels_per_frame
+
+        total_number_of_weights = len(input_code_list)
+        total_number_of_bits_for_weights =  total_number_of_weights * args.quant_bit
+
+        bpp_bits_per_pixel_quant = total_number_of_bits_for_weights/total_number_of_pixels_per_video_sequence
+
+        bitdepth_per_RGB_pixel = 3*8 # assuming 8 bits per color sample
+        total_number_of_bits_per_video_sequence = total_number_of_pixels_per_video_sequence * bitdepth_per_RGB_pixel
+
+        compression_percentage_quant = 100*total_number_of_bits_for_weights/total_number_of_bits_per_video_sequence
+
+        
+
+
+        #snerv
         # generating HuffmanCoding table
         codec = HuffmanCodec.from_data(input_code_list)
         sym_bit_dict = {}
@@ -499,15 +603,123 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
         avg_bits = total_bits / len(input_code_list)    
         # import pdb; pdb.set_trace; from IPython import embed; embed()       
         encoding_efficiency = avg_bits / args.quant_bit
-        print_str = f'Entropy encoding efficiency for bit {args.quant_bit}: {encoding_efficiency}'
+
+        #snerv
+
+        bpp_bits_per_pixel_quant_entropy = total_bits/total_number_of_pixels_per_video_sequence
+        compression_percentage_quant_entropy = 100*total_bits/total_number_of_bits_per_video_sequence
+
+
+        
+
+        # print_str = f'Entropy encoding efficiency for bit {args.quant_bit}: {encoding_efficiency}'
+        # print(print_str)
+        # if local_rank in [0, None]:
+        #     with open('{}/eval.txt'.format(args.outf), 'a') as f:
+        #         f.write(print_str + '\n')
+
+        # #Git's bpp
+        # print_str = f'bpp per original git formula for bit {args.quant_bit}: {len(input_code_list)*(1-args.prune_ratio)*args.quant_bit/total_number_of_pixels_per_video_sequence}'
+        # print(print_str)
+        # if local_rank in [0, None]:
+        #     with open('{}/eval.txt'.format(args.outf), 'a') as f:
+        #         f.write(print_str + '\n')
+
+
+        #snerv
+
+        print_str = f'==================================================================='
         print(print_str)
         if local_rank in [0, None]:
             with open('{}/eval.txt'.format(args.outf), 'a') as f:
-                f.write(print_str + '\n')       
+                f.write(print_str + '\n')
+        
+        print_str = f'These results are for a testing sample of {args.num_frames} frames:'
+        print(print_str)
+        if local_rank in [0, None]:
+            with open('{}/eval.txt'.format(args.outf), 'a') as f:
+                f.write(print_str + '\n')
+        
+        print_str = f'Using a pruning ratio of {100*args.prune_ratio}%:'
+        print(print_str)
+        if local_rank in [0, None]:
+            with open('{}/eval.txt'.format(args.outf), 'a') as f:
+                f.write(print_str + '\n')
+
+        
+        print_str = f'---------------------------------------------------'
+        print(print_str)
+        if local_rank in [0, None]:
+            with open('{}/eval.txt'.format(args.outf), 'a') as f:
+                f.write(print_str + '\n')
+
+
+        # print_str = f'Layer {layer_index} Results:'
+        # print(print_str)
+        # if local_rank in [0, None]:
+        #     with open('{}/eval.txt'.format(args.outf), 'a') as f:
+        #         f.write(print_str + '\n')
+
+        # print_str = f'---------------------------------------------------'
+        # print(print_str)
+        # if local_rank in [0, None]:
+        #     with open('{}/eval.txt'.format(args.outf), 'a') as f:
+        #         f.write(print_str + '\n')
+
+
+        print_str = f'bpp after pruning and quantization to {args.quant_bit} bits: {bpp_bits_per_pixel_quant}'
+        print(print_str)
+        if local_rank in [0, None]:
+            with open('{}/eval.txt'.format(args.outf), 'a') as f:
+                f.write(print_str + '\n')
+
+        print_str = f'This is equavelnt to a % compression ratio due to pruning followed by quantization to {args.quant_bit} bits of: {compression_percentage_quant}%'
+        print(print_str)
+        if local_rank in [0, None]:
+            with open('{}/eval.txt'.format(args.outf), 'a') as f:
+                f.write(print_str + '\n')
+
+        
+        print_str = f'bpp after pruning and quantization to {args.quant_bit} bits, followed by entropy coding: {bpp_bits_per_pixel_quant_entropy}'
+        print(print_str)
+        if local_rank in [0, None]:
+            with open('{}/eval.txt'.format(args.outf), 'a') as f:
+                f.write(print_str + '\n')
+        
+        print_str = f'This is equavelnt to a % compression ratio due to pruning, {args.quant_bit}-bit quantization, and entropy coding: {compression_percentage_quant_entropy}%'
+        print(print_str)
+        if local_rank in [0, None]:
+            with open('{}/eval.txt'.format(args.outf), 'a') as f:
+                f.write(print_str + '\n')
+
+        
+        print_str = f'So for {args.quant_bit}-bit quantization, entropy coding provides an extra gain of: {compression_percentage_quant-compression_percentage_quant_entropy}%'
+        print(print_str)
+        if local_rank in [0, None]:
+            with open('{}/eval.txt'.format(args.outf), 'a') as f:
+                f.write(print_str + '\n')
+
+
+        print_str = f'---------------------------------------------------'
+        print(print_str)
+        if local_rank in [0, None]:
+            with open('{}/eval.txt'.format(args.outf), 'a') as f:
+                f.write(print_str + '\n')
+
+
+        
+
+        ###########################################
         model.load_state_dict(cur_ckt)
+        ###########################################
 
         # import pdb; pdb.set_trace; from IPython import embed; embed()
 
+    
+    
+    #################################################################################
+    
+    
     psnr_list = []
     msssim_list = []
     if args.dump_images:
@@ -528,7 +740,8 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
             embed_input = embed_input.cuda(local_rank, non_blocking=True)
         else:
             # data,  embed_input = data.cuda(non_blocking=True), embed_input.cuda(non_blocking=True)
-            # Hossam
+            # Replacing nvidia cuda with cpu
+            # snerv
             data, embed_input = data.cpu(), embed_input.cpu()
 
 
@@ -540,7 +753,8 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
             start_time = datetime.now()
             output_list = model(embed_input)
             
-            # Hossam comment the line after
+            # snerv
+            # removing nvidia cuda code since we are using cpu
             # torch.cuda.synchronize()
             # torch.cuda.current_stream().synchronize()
             time_list.append((datetime.now() - start_time).total_seconds())

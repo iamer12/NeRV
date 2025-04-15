@@ -22,7 +22,7 @@ from tqdm import tqdm
 from model_nerv import CustomDataSet, Generator
 from utils import *
 
-#To allow limited range of tested data
+#snerv To allow limited range of tested data
 from torch.utils.data import Subset
 
 
@@ -293,25 +293,16 @@ def train(local_rank, args):
     train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batchSize, shuffle=(train_sampler is None),
          num_workers=args.workers, pin_memory=True, sampler=train_sampler, drop_last=True, worker_init_fn=worker_init_fn)
 
-    # val_dataset = DataSet(val_data_dir, img_transforms, vid_list=args.vid, frame_gap=args.test_gap,  )
-    # val_sampler = torch.utils.data.distributed.DistributedSampler(val_dataset) if args.distributed else None
-    # val_dataloader = torch.utils.data.DataLoader(val_dataset, batch_size=args.batchSize,  shuffle=False,
-    #      num_workers=args.workers, pin_memory=True, sampler=val_sampler, drop_last=False, worker_init_fn=worker_init_fn)
-    # data_size = len(train_dataset)
-
 
 ##############################
 
     # snerv
-
     # Limiting the range of the input images to be tested/validated
     # Create full val_dataset
     val_dataset = DataSet(val_data_dir, img_transforms, vid_list=args.vid, frame_gap=args.test_gap)
-    # Limit to first 20 samples
-    #val_indices = list(range(min(20, len(val_dataset))))  # Just in case dataset has fewer than 20
+    # Limit to first num_frames samples
     val_indices = list(range(min(args.num_frames, len(val_dataset))))  # Just in case dataset has fewer than requested number of frames
     val_dataset = Subset(val_dataset, val_indices)
-
     # Sampler for subset (note: DistributedSampler is usually incompatible with Subset for fixed indices)
     val_sampler = None  # Disable sampler when using subset
 
@@ -349,6 +340,7 @@ def train(local_rank, args):
 
         # import pdb; pdb.set_trace; from IPython import embed; embed()
         ##############################################
+        # Calling optimizer and inference
         val_psnr, val_msssim = evaluate(model, val_dataloader, PE, local_rank, args)
         ##############################################
 
@@ -490,12 +482,11 @@ def train(local_rank, args):
 
 @torch.no_grad()
 def evaluate(model, val_dataloader, pe, local_rank, args):
+    
     # Model Quantization
     
-
     #for layer_index in range(1, args.num_prec_layers+1): # for base layer and every enhancement layer
         
-
     if args.quant_bit != -1:
         cur_ckt = model.state_dict()
         from dahuffman import HuffmanCodec
@@ -503,7 +494,13 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
         for k,v in cur_ckt.items():
             large_tf = (v.dim() in {2,4} and 'bias' not in k)
             
+            # snerv
             #############################
+
+
+            #for layer_index in range(1, args.num_prec_layers+1): # for base layer and every enhancement layer
+
+                
             if args.num_prec_layers >= 1:
                 quant_v, new_v = quantize_per_tensor(v, args.quant_bit, args.quant_axis if large_tf else -1)
                 cur_ckt[k] = new_v
@@ -511,32 +508,18 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
                 quant_v_L2, new_v_L2 = quantize_per_tensor(v-new_v, args.quant_bit, args.quant_axis if large_tf else -1)
                 new_v_acc = new_v + new_v_L2
                 cur_ckt[k] = new_v_acc  # include enhancement layer(s)
-            #############################
-
-            # quant_v, new_v = quantize_per_tensor(layer_v, args.quant_bit/(args.qratio_prec_layers ** (layer_index-1)), args.quant_axis if large_tf else -1)
-            # quant_v, new_v = quantize_per_tensor((v - acc_new_v), args.quant_bit/(args.qratio_prec_layers ** (layer_index-1)), args.quant_axis if large_tf else -1)
-            # acc_new_v += new_v
-            # acc_quant_v += quant_v
             
-            # new_v = acc_new_v
-            # quant_v = acc_quant_v
-            #############################
-
             
-            # valid_quant_v = quant_v[v!=0] # only include non-zero weights
-            # quant_weitht_list.append(valid_quant_v.flatten())
-            # cur_ckt[k] = new_v
-
+        
             if args.num_prec_layers >= 1:
                 valid_quant_v = quant_v[v!=0] # only include non-zero weights
                 quant_weitht_list.append(valid_quant_v.flatten())
             
             
-            # snerv
             if args.num_prec_layers >= 2:
                 valid_quant_v_L2 = quant_v_L2[v!=0] # only include non-zero weights
                 quant_weitht_list.append(valid_quant_v_L2.flatten())
-
+            #############################
 
 
         cat_param = torch.cat(quant_weitht_list)
@@ -545,37 +528,24 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
         num_freq = dict(zip(unique, counts))
 
 
-
-
         #snerv
         # Get a batch of data from the val_dataloader
         data_iter = iter(val_dataloader)
         inputs, *_ = next(data_iter)  # Assuming inputs are the first returned item
-        
         # Get input properties
-        dtype = inputs.dtype
+        # dtype = inputs.dtype
         # Check the shape
         # print("Input shape:", inputs.shape)
-
         # Number of pixels per frame (height x width)
         # Number of channels = 3 (for RGB)
         _, channels, height, width = inputs.shape
 
         # Bits per channel based on dtype
         #bits_per_channel = torch.finfo(dtype).bits if dtype.is_floating_point else torch.iinfo(dtype).bits
-
         # Total bits per pixel (across all channels)
         # bits_per_pixel = channels * bits_per_channel
 
-        total_number_of_pixels_per_frame = height * width
-        #print(f"Total values per frame (with channels): {num_total_values}")
-        #total_number_of_bits_per_frame = total_number_of_pixels_per_frame * bits_per_pixel
-
-
-        #snerv
-        #total_number_of_frames = len(val_indices)
-        # total_number_of_bits_per_video_sequence = total_number_of_frames * total_number_of_bits_per_frame
-
+        total_number_of_pixels_per_frame = height * width        
         total_number_of_pixels_per_video_sequence = args.num_frames * total_number_of_pixels_per_frame
 
         total_number_of_weights = len(input_code_list)
@@ -590,7 +560,6 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
 
         
 
-
         #snerv
         # generating HuffmanCoding table
         codec = HuffmanCodec.from_data(input_code_list)
@@ -602,31 +571,12 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
             total_bits += freq * sym_bit_dict[num]
         avg_bits = total_bits / len(input_code_list)    
         # import pdb; pdb.set_trace; from IPython import embed; embed()       
-        encoding_efficiency = avg_bits / args.quant_bit
+        # encoding_efficiency = avg_bits / args.quant_bit
 
-        #snerv
-
+        
         bpp_bits_per_pixel_quant_entropy = total_bits/total_number_of_pixels_per_video_sequence
         compression_percentage_quant_entropy = 100*total_bits/total_number_of_bits_per_video_sequence
 
-
-        
-
-        # print_str = f'Entropy encoding efficiency for bit {args.quant_bit}: {encoding_efficiency}'
-        # print(print_str)
-        # if local_rank in [0, None]:
-        #     with open('{}/eval.txt'.format(args.outf), 'a') as f:
-        #         f.write(print_str + '\n')
-
-        # #Git's bpp
-        # print_str = f'bpp per original git formula for bit {args.quant_bit}: {len(input_code_list)*(1-args.prune_ratio)*args.quant_bit/total_number_of_pixels_per_video_sequence}'
-        # print(print_str)
-        # if local_rank in [0, None]:
-        #     with open('{}/eval.txt'.format(args.outf), 'a') as f:
-        #         f.write(print_str + '\n')
-
-
-        #snerv
 
         print_str = f'==================================================================='
         print(print_str)
@@ -653,18 +603,6 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
             with open('{}/eval.txt'.format(args.outf), 'a') as f:
                 f.write(print_str + '\n')
 
-
-        # print_str = f'Layer {layer_index} Results:'
-        # print(print_str)
-        # if local_rank in [0, None]:
-        #     with open('{}/eval.txt'.format(args.outf), 'a') as f:
-        #         f.write(print_str + '\n')
-
-        # print_str = f'---------------------------------------------------'
-        # print(print_str)
-        # if local_rank in [0, None]:
-        #     with open('{}/eval.txt'.format(args.outf), 'a') as f:
-        #         f.write(print_str + '\n')
 
 
         print_str = f'bpp after pruning and quantization to {args.quant_bit} bits: {bpp_bits_per_pixel_quant}'
@@ -707,9 +645,22 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
                 f.write(print_str + '\n')
 
 
+        # print_str = f'Entropy encoding efficiency for bit {args.quant_bit}: {encoding_efficiency}'
+        # print(print_str)
+        # if local_rank in [0, None]:
+        #     with open('{}/eval.txt'.format(args.outf), 'a') as f:
+        #         f.write(print_str + '\n')
+
+        # #bpp based on the forumla on original git (I do not quite agree)
+        # print_str = f'bpp per original git formula for bit {args.quant_bit}: {len(input_code_list)*(1-args.prune_ratio)*args.quant_bit/total_number_of_pixels_per_video_sequence}'
+        # print(print_str)
+        # if local_rank in [0, None]:
+        #     with open('{}/eval.txt'.format(args.outf), 'a') as f:
+        #         f.write(print_str + '\n')
         
 
         ###########################################
+        # loading optimized model to pass it later for inference and get the outputs
         model.load_state_dict(cur_ckt)
         ###########################################
 

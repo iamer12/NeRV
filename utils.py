@@ -11,7 +11,10 @@ from pytorch_msssim import ms_ssim, ssim
 def quantize_per_tensor(t, bit=8, axis=-1):
     if axis == -1:
         t_valid = t!=0
-        t_min, t_max =  t[t_valid].min(), t[t_valid].max()
+        # t_min, t_max =  t[t_valid].min(), t[t_valid].max()
+        # replaced the above line with this one below because it would eventually trigger a run-time error when passed input tensor is all zeros. Keeping it like this likely leads to inputs traversing to outputs untouched
+        t_min, t_max =  t.min(), t.max() 
+        
         scale = (t_max - t_min) / 2**bit
     elif axis == 0:
         min_max_list = []
@@ -45,6 +48,7 @@ def quantize_per_tensor(t, bit=8, axis=-1):
         elif t.dim() == 2:
             scale = scale[None,:]
             t_min = min_max_tf[None,:,0]            
+    
     # import pdb; pdb.set_trace; from IPython import embed; embed()       
     quant_t = ((t - t_min) / (scale + 1e-19)).round()
     new_t = t_min + scale * quant_t

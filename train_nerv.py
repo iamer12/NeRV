@@ -45,7 +45,6 @@ def main():
 
     # snerv linear parameters
     parser.add_argument('--num_prec_layers', type=int, default=1, help='number of precision layers - default is 1 (i.e., only base) layer')
-    #parser.add_argument('--qratio_prec_layers', type=int, default=1, help='ratio between quant_bit of successive precision layers - default is 1 (i.e., base layer and all enhancement layers have the same quant_bit')
     parser.add_argument('--quant_bit_enh', type=int, nargs='+', default=[8, 8, 8], help='Number of quant bits for every enhancement layer')
 
     # embedding parameters
@@ -307,8 +306,6 @@ def train(local_rank, args):
     # Sampler for subset (note: DistributedSampler is usually incompatible with Subset for fixed indices)
     val_sampler = None  # Disable sampler when using subset
 
-
-
     # Dataloader
     val_dataloader = torch.utils.data.DataLoader(
         val_dataset,
@@ -323,8 +320,6 @@ def train(local_rank, args):
     data_size = len(train_dataset)
 
 ##############################
-
-
 
 
     if args.eval_only:
@@ -496,29 +491,16 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
             # snerv
             # The core scalabilty process takes place here
             #############################
+            layer_index = 1
             for layer_index in range(1, args.num_prec_layers+1): # for base layer and every enhancement layer
-
-                # if layer_index == 1:
-                #     layer_v = v                 # highest quality/full precision tensor
-                # else:
-                #     layer_v = v - cur_ckt[k]    # delta between highest quality/full precision tensor, and the latest tensor uptil last enhancement layer
-
-                # #-#-#-#-#-#-#-#-#-#-#-#-
-                # quant_v, new_v = quantize_per_tensor(layer_v, args.quant_bit/(args.qratio_prec_layers ** (layer_index-1)), args.quant_axis if large_tf else -1)
-                # #-#-#-#-#-#-#-#-#-#-#-#-
-
-                # if layer_index == 1:
-                #     cur_ckt[k] = new_v
-                # else:
-                #     cur_ckt[k] = cur_ckt[k] + new_v # include/accumulate enhancement layer(s)
-
-
+ 
                 if layer_index == 1: # base layer
-                    quant_v, new_v = quantize_per_tensor(v, args.quant_bit, args.quant_axis if large_tf else -1)
+                    quant_v, new_v = quantize_per_tensor(v, args.quant_bit, args.quant_axis if large_tf else -1) # pass highest quality/full precision tensor
                     cur_ckt[k] = new_v
-                else:
+                else: # enhancement layer(s)
                     quant_v, new_v = quantize_per_tensor(v-cur_ckt[k], args.quant_bit_enh[layer_index-2], args.quant_axis if large_tf else -1) # pass delta between highest quality/full precision tensor, and the latest tensor uptil last enhancement layer
                     cur_ckt[k] = cur_ckt[k] + new_v # include/accumulate enhancement layer(s)
+                layer_index = layer_index + 1
 
 
                 valid_quant_v = quant_v[v!=0] # only include non-zero weights
@@ -557,17 +539,16 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
         total_number_of_pixels_per_frame = height * width        
         total_number_of_pixels_per_video_sequence = args.num_frames * total_number_of_pixels_per_frame
 
-        # total_number_of_weights = len(input_code_list)
-        # total_number_of_bits_for_weights =  total_number_of_weights * args.quant_bit
+        
         total_number_of_weights = len(input_code_list)
+        layer_index = 1
         for layer_index in range(1, args.num_prec_layers+1): # for base layer and every enhancement layer
             if layer_index == 1: # base layers
                 total_number_of_bits_for_weights =  (total_number_of_weights/args.num_prec_layers) * args.quant_bit
-            else:
+            else: # enhancement layer(s)
                 total_number_of_bits_for_weights += (total_number_of_weights/args.num_prec_layers) * args.quant_bit_enh[layer_index-2]
+            layer_index = layer_index + 1
 
-
-        
 
         bpp_bits_per_pixel_quant = total_number_of_bits_for_weights/total_number_of_pixels_per_video_sequence
 
@@ -575,8 +556,6 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
         total_number_of_bits_per_video_sequence = total_number_of_pixels_per_video_sequence * bitdepth_per_RGB_pixel
 
         compression_percentage_quant = 100*total_number_of_bits_for_weights/total_number_of_bits_per_video_sequence
-
-        
 
         #snerv
         # generating HuffmanCoding table
@@ -590,11 +569,9 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
         avg_bits = total_bits / len(input_code_list)    
         # import pdb; pdb.set_trace; from IPython import embed; embed()       
         # encoding_efficiency = avg_bits / args.quant_bit
-
-        
+ 
         bpp_bits_per_pixel_quant_entropy = total_bits/total_number_of_pixels_per_video_sequence
         compression_percentage_quant_entropy = 100*total_bits/total_number_of_bits_per_video_sequence
-
 
         print_str = f'==================================================================='
         print(print_str)
@@ -602,17 +579,36 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
             with open('{}/eval.txt'.format(args.outf), 'a') as f:
                 f.write(print_str + '\n')
         
-        print_str = f'These results are for a testing sample of {args.num_frames} frames:'
+        print_str = f'These results are for a testing sample of {args.num_frames} frames'
         print(print_str)
         if local_rank in [0, None]:
             with open('{}/eval.txt'.format(args.outf), 'a') as f:
                 f.write(print_str + '\n')
         
-        print_str = f'Using a pruning ratio of {100*args.prune_ratio}%:'
+        print_str = f'Total number of precision layers is {args.num_prec_layers}'
         print(print_str)
         if local_rank in [0, None]:
             with open('{}/eval.txt'.format(args.outf), 'a') as f:
                 f.write(print_str + '\n')
+
+        print_str = f'Base layer is quantized into {args.quant_bit} bits'
+        print(print_str)
+        if local_rank in [0, None]:
+            with open('{}/eval.txt'.format(args.outf), 'a') as f:
+                f.write(print_str + '\n')
+
+        print_str = f'Quant bits for potential enhancement layers is defined as {args.quant_bit_enh}'
+        print(print_str)
+        if local_rank in [0, None]:
+            with open('{}/eval.txt'.format(args.outf), 'a') as f:
+                f.write(print_str + '\n')
+
+
+        # print_str = f'Using a pruning ratio of {100*args.prune_ratio}%:'
+        # print(print_str)
+        # if local_rank in [0, None]:
+        #     with open('{}/eval.txt'.format(args.outf), 'a') as f:
+        #         f.write(print_str + '\n')
 
         
         print_str = f'---------------------------------------------------'
@@ -622,33 +618,33 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
                 f.write(print_str + '\n')
 
 
-        print_str = f'bpp after pruning and quantization to {args.quant_bit} bits: {bpp_bits_per_pixel_quant}'
+        print_str = f'bpp after pruning and quantization: {bpp_bits_per_pixel_quant}'
         print(print_str)
         if local_rank in [0, None]:
             with open('{}/eval.txt'.format(args.outf), 'a') as f:
                 f.write(print_str + '\n')
 
-        print_str = f'This is equavelnt to a % compression ratio due to pruning followed by quantization to {args.quant_bit} bits of: {compression_percentage_quant}%'
-        print(print_str)
-        if local_rank in [0, None]:
-            with open('{}/eval.txt'.format(args.outf), 'a') as f:
-                f.write(print_str + '\n')
-
-        
-        print_str = f'bpp after pruning and quantization to {args.quant_bit} bits, followed by entropy coding: {bpp_bits_per_pixel_quant_entropy}'
-        print(print_str)
-        if local_rank in [0, None]:
-            with open('{}/eval.txt'.format(args.outf), 'a') as f:
-                f.write(print_str + '\n')
-        
-        print_str = f'This is equavelnt to a % compression ratio due to pruning, {args.quant_bit}-bit quantization, and entropy coding: {compression_percentage_quant_entropy}%'
+        print_str = f'This is equavelnt to a % compression ratio due to pruning followed by quantization: {compression_percentage_quant}%'
         print(print_str)
         if local_rank in [0, None]:
             with open('{}/eval.txt'.format(args.outf), 'a') as f:
                 f.write(print_str + '\n')
 
         
-        print_str = f'So for {args.quant_bit}-bit quantization, entropy coding provides an extra gain of: {compression_percentage_quant-compression_percentage_quant_entropy}%'
+        print_str = f'bpp after pruning and quantization, followed by entropy coding: {bpp_bits_per_pixel_quant_entropy}'
+        print(print_str)
+        if local_rank in [0, None]:
+            with open('{}/eval.txt'.format(args.outf), 'a') as f:
+                f.write(print_str + '\n')
+        
+        print_str = f'This is equavelnt to a % compression ratio due to pruning, quantization, and entropy coding: {compression_percentage_quant_entropy}%'
+        print(print_str)
+        if local_rank in [0, None]:
+            with open('{}/eval.txt'.format(args.outf), 'a') as f:
+                f.write(print_str + '\n')
+
+        
+        print_str = f'So, entropy coding provides an extra gain of: {compression_percentage_quant-compression_percentage_quant_entropy}%'
         print(print_str)
         if local_rank in [0, None]:
             with open('{}/eval.txt'.format(args.outf), 'a') as f:
@@ -662,7 +658,6 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
                 f.write(print_str + '\n')
 
         
-
         ###########################################
         # loading optimized model to pass it later for inference and get the outputs
         model.load_state_dict(cur_ckt)
@@ -670,7 +665,6 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
 
         # import pdb; pdb.set_trace; from IPython import embed; embed()
 
-    
     #################################################################################
     
     

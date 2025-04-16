@@ -105,9 +105,11 @@
           "--prune_ratio", "0.4",
           "--eval_only",
           "--not_resume_epoch",
-          "--quant_bit", "8",
-          "--quant_axis", "0"
-          "--num_frames", "20"
+          "--quant_bit", "6",
+          "--quant_axis", "0",
+          "--num_frames", "20",
+          "--num_prec_layers", "2",
+          "--quant_bit_enh", "6", "0", "0"
         ]
       }
 

@@ -45,7 +45,8 @@ def main():
 
     # snerv linear parameters
     parser.add_argument('--num_prec_layers', type=int, default=1, help='number of precision layers - default is 1 (i.e., only base) layer')
-    parser.add_argument('--qratio_prec_layers', type=int, default=1, help='ratio between quant_bit of successive precision layers - default is 1 (i.e., base layer and all enhancement layers have the same quant_bit')
+    #parser.add_argument('--qratio_prec_layers', type=int, default=1, help='ratio between quant_bit of successive precision layers - default is 1 (i.e., base layer and all enhancement layers have the same quant_bit')
+    parser.add_argument('--quant_bit_enh', type=int, nargs='+', default=[8, 8, 8], help='Number of quant bits for every enhancement layer')
 
     # embedding parameters
     parser.add_argument('--embed', type=str, default='1.25_80', help='base value/embed length for position encoding')
@@ -489,7 +490,7 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
     if args.quant_bit != -1:
         cur_ckt = model.state_dict()
         from dahuffman import HuffmanCodec
-        quant_weitht_list = []
+        quant_weight_list = []
         for k,v in cur_ckt.items():
             large_tf = (v.dim() in {2,4} and 'bias' not in k)
             # snerv
@@ -497,27 +498,40 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
             #############################
             for layer_index in range(1, args.num_prec_layers+1): # for base layer and every enhancement layer
 
-                if layer_index == 1:
-                    layer_v = v                 # highest quality/full precision tensor
-                else:
-                    layer_v = v - cur_ckt[k]    # delta between highest quality/full precision tensor, and the latest tensor uptil last enhancement layer
+                # if layer_index == 1:
+                #     layer_v = v                 # highest quality/full precision tensor
+                # else:
+                #     layer_v = v - cur_ckt[k]    # delta between highest quality/full precision tensor, and the latest tensor uptil last enhancement layer
 
-                #-#-#-#-#-#-#-#-#-#-#-#-
-                quant_v, new_v = quantize_per_tensor(layer_v, args.quant_bit/(args.qratio_prec_layers ** (layer_index-1)), args.quant_axis if large_tf else -1)
-                #-#-#-#-#-#-#-#-#-#-#-#-
+                # #-#-#-#-#-#-#-#-#-#-#-#-
+                # quant_v, new_v = quantize_per_tensor(layer_v, args.quant_bit/(args.qratio_prec_layers ** (layer_index-1)), args.quant_axis if large_tf else -1)
+                # #-#-#-#-#-#-#-#-#-#-#-#-
 
-                if layer_index == 1:
+                # if layer_index == 1:
+                #     cur_ckt[k] = new_v
+                # else:
+                #     cur_ckt[k] = cur_ckt[k] + new_v # include/accumulate enhancement layer(s)
+
+
+                if layer_index == 1: # base layer
+                    quant_v, new_v = quantize_per_tensor(v, args.quant_bit, args.quant_axis if large_tf else -1)
                     cur_ckt[k] = new_v
                 else:
+                    quant_v, new_v = quantize_per_tensor(v-cur_ckt[k], args.quant_bit_enh[layer_index-2], args.quant_axis if large_tf else -1) # pass delta between highest quality/full precision tensor, and the latest tensor uptil last enhancement layer
                     cur_ckt[k] = cur_ckt[k] + new_v # include/accumulate enhancement layer(s)
 
 
                 valid_quant_v = quant_v[v!=0] # only include non-zero weights
-                quant_weitht_list.append(valid_quant_v.flatten())
+                quant_weight_list.append(valid_quant_v.flatten())
+
+            ####### Testing:
+            # quant_v, new_v = quantize_per_tensor(v, args.quant_bit*layer_index, args.quant_axis if large_tf else -1)
+            # check_v = cur_ckt[k] - new_v
+            # stop = 1
 
             #############################
 
-        cat_param = torch.cat(quant_weitht_list)
+        cat_param = torch.cat(quant_weight_list)
         input_code_list = cat_param.tolist()
         unique, counts = np.unique(input_code_list, return_counts=True)
         num_freq = dict(zip(unique, counts))
@@ -533,7 +547,7 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
         # print("Input shape:", inputs.shape)
         # Number of pixels per frame (height x width)
         # Number of channels = 3 (for RGB)
-        _, channels, height, width = inputs.shape
+        _, _, height, width = inputs.shape
 
         # Bits per channel based on dtype
         #bits_per_channel = torch.finfo(dtype).bits if dtype.is_floating_point else torch.iinfo(dtype).bits
@@ -543,8 +557,17 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
         total_number_of_pixels_per_frame = height * width        
         total_number_of_pixels_per_video_sequence = args.num_frames * total_number_of_pixels_per_frame
 
+        # total_number_of_weights = len(input_code_list)
+        # total_number_of_bits_for_weights =  total_number_of_weights * args.quant_bit
         total_number_of_weights = len(input_code_list)
-        total_number_of_bits_for_weights =  total_number_of_weights * args.quant_bit
+        for layer_index in range(1, args.num_prec_layers+1): # for base layer and every enhancement layer
+            if layer_index == 1: # base layers
+                total_number_of_bits_for_weights =  (total_number_of_weights/args.num_prec_layers) * args.quant_bit
+            else:
+                total_number_of_bits_for_weights += (total_number_of_weights/args.num_prec_layers) * args.quant_bit_enh[layer_index-2]
+
+
+        
 
         bpp_bits_per_pixel_quant = total_number_of_bits_for_weights/total_number_of_pixels_per_video_sequence
 

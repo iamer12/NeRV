@@ -527,9 +527,9 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
         # Calculating and reporting sqnr. Every precision layer will have the sqnr that is associated to it
         layer_index = 1
         for layer_index in range(1, args.num_prec_layers+1): # for base layer and every enhancement layer
+            ##
             sqnr[layer_index-1] = 10 * math.log10(v_sqr/v_ssd[layer_index-1]) # The assumption is that as more enhacement layers are included, sqnr becomes bigger/better
-            layer_index = layer_index + 1
-
+            ##
             if layer_index == 1:
                 print_str = f'SQNR for base layer is: {sqnr[0]}'
                 print(print_str)
@@ -542,6 +542,8 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
                 if local_rank in [0, None]:
                     with open('{}/eval.txt'.format(args.outf), 'a') as f:
                         f.write(print_str + '\n')
+        
+        layer_index = layer_index + 1
         ###########
 
 
@@ -564,7 +566,7 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
         _, _, height, width = inputs.shape
 
         # Bits per channel based on dtype
-        #bits_per_channel = torch.finfo(dtype).bits if dtype.is_floating_point else torch.iinfo(dtype).bits
+        # bits_per_channel = torch.finfo(dtype).bits if dtype.is_floating_point else torch.iinfo(dtype).bits
         # Total bits per pixel (across all channels)
         # bits_per_pixel = channels * bits_per_channel
 
@@ -656,7 +658,7 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
             with open('{}/eval.txt'.format(args.outf), 'a') as f:
                 f.write(print_str + '\n')
 
-        print_str = f'This is equavelnt to a % compression ratio due to pruning followed by quantization: {compression_percentage_quant}%'
+        print_str = f'This is equivalent to a % compression ratio due to pruning followed by quantization: {compression_percentage_quant}%'
         print(print_str)
         if local_rank in [0, None]:
             with open('{}/eval.txt'.format(args.outf), 'a') as f:
@@ -669,7 +671,7 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
             with open('{}/eval.txt'.format(args.outf), 'a') as f:
                 f.write(print_str + '\n')
         
-        print_str = f'This is equavelnt to a % compression ratio due to pruning, quantization, and entropy coding: {compression_percentage_quant_entropy}%'
+        print_str = f'This is equivalent to a % compression ratio due to pruning, quantization, and entropy coding: {compression_percentage_quant_entropy}%'
         print(print_str)
         if local_rank in [0, None]:
             with open('{}/eval.txt'.format(args.outf), 'a') as f:

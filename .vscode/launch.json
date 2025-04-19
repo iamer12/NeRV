@@ -108,7 +108,7 @@
           "--quant_bit", "4",
           "--quant_axis", "0",
           "--num_frames", "20",
-          "--num_prec_layers", "3",
+          "--num_prec_layers", "4",
           "--quant_bit_enh", "4", "4", "4"
         ]
       }

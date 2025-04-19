@@ -486,20 +486,60 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
         cur_ckt = model.state_dict()
         from dahuffman import HuffmanCodec
         quant_weight_list = []
-        for k,v in cur_ckt.items():
+        ###########
+        #v_sqr = [0] * args.num_prec_layers
+        v_sqr = 0
+        v_ssd = [0] * args.num_prec_layers
+        sqnr = [0] * args.num_prec_layers
+        
+        # q_ssd_k = []
+        # q_ssd_l = []
+        
+        reset_flag = 1
+        ###########
+        
+        for k,v in cur_ckt.items():            
             large_tf = (v.dim() in {2,4} and 'bias' not in k)
             # snerv
             # The core scalabilty process takes place here
             #############################
+
+            ###########
+            # if reset_flag == 1:
+            #     reset_flag = 0
+            #     for i in range(len(v)):
+            #         v_sqr[i] = 0
+                    #v_ssd[i] = 0
+            ###########
+
+            
+            v_sqr = v_sqr + (v ** 2).sum()
+
+            layer_index = 1
             layer_index = 1
             for layer_index in range(1, args.num_prec_layers+1): # for base layer and every enhancement layer
  
                 if layer_index == 1: # base layer
                     quant_v, new_v = quantize_per_tensor(v, args.quant_bit, args.quant_axis if large_tf else -1) # pass highest quality/full precision tensor
                     cur_ckt[k] = new_v
+                    # if reset_flag == 1:
+                    #     reset_flag = 0
+                    #     v_sqr[layer_index] = 0
+            
+
+                    #q_ssd[layer_index][k] = sum((a - b) ** 2 for a, b in zip(quant_v, new_v))
+                    #q_ssd_k[layer_index] = q_ssd[layer_index][k]
                 else: # enhancement layer(s)
                     quant_v, new_v = quantize_per_tensor(v-cur_ckt[k], args.quant_bit_enh[layer_index-2], args.quant_axis if large_tf else -1) # pass delta between highest quality/full precision tensor, and the latest tensor uptil last enhancement layer
                     cur_ckt[k] = cur_ckt[k] + new_v # include/accumulate enhancement layer(s)
+                    #q_ssd[layer_index][k] = sum((a - b) ** 2 for a, b in zip(quant_v, new_v))
+                    #q_ssd_k[layer_index] = q_ssd_k[layer_index] + q_ssd[layer_index][k]
+                
+                #v_sqr[layer_index-1] =  v_sqr[layer_index-1] + sum(a**2 for a in v)
+                #v_ssd[layer_index-1] = v_ssd[layer_index-1] + sum((a - b) ** 2 for a, b in zip(v, cur_ckt[k]))
+                v_ssd[layer_index-1] = v_ssd[layer_index-1] + ((v-cur_ckt[k])**2).sum()
+                
+                
                 layer_index = layer_index + 1
 
 
@@ -512,6 +552,12 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
             # stop = 1
 
             #############################
+
+        layer_index = 1
+        for layer_index in range(1, args.num_prec_layers+1): # for base layer and every enhancement layer
+            sqnr[layer_index-1] = 10 * math.log10(v_sqr/v_ssd[layer_index-1])
+            layer_index = layer_index + 1
+
 
         cat_param = torch.cat(quant_weight_list)
         input_code_list = cat_param.tolist()

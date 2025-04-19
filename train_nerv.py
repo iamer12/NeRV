@@ -487,15 +487,9 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
         from dahuffman import HuffmanCodec
         quant_weight_list = []
         ###########
-        #v_sqr = [0] * args.num_prec_layers
         v_sqr = 0
         v_ssd = [0] * args.num_prec_layers
         sqnr = [0] * args.num_prec_layers
-        
-        # q_ssd_k = []
-        # q_ssd_l = []
-        
-        reset_flag = 1
         ###########
         
         for k,v in cur_ckt.items():            
@@ -504,59 +498,51 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
             # The core scalabilty process takes place here
             #############################
 
-            ###########
-            # if reset_flag == 1:
-            #     reset_flag = 0
-            #     for i in range(len(v)):
-            #         v_sqr[i] = 0
-                    #v_ssd[i] = 0
-            ###########
+            v_sqr = v_sqr + (v ** 2).sum()  # calculating the power of the signal (note that I ommitted the division by the signal length since the numerator and denimunator have the same length and hence will cancel each other)
 
-            
-            v_sqr = v_sqr + (v ** 2).sum()
-
-            layer_index = 1
+            ###########
             layer_index = 1
             for layer_index in range(1, args.num_prec_layers+1): # for base layer and every enhancement layer
  
                 if layer_index == 1: # base layer
                     quant_v, new_v = quantize_per_tensor(v, args.quant_bit, args.quant_axis if large_tf else -1) # pass highest quality/full precision tensor
                     cur_ckt[k] = new_v
-                    # if reset_flag == 1:
-                    #     reset_flag = 0
-                    #     v_sqr[layer_index] = 0
             
-
-                    #q_ssd[layer_index][k] = sum((a - b) ** 2 for a, b in zip(quant_v, new_v))
-                    #q_ssd_k[layer_index] = q_ssd[layer_index][k]
                 else: # enhancement layer(s)
                     quant_v, new_v = quantize_per_tensor(v-cur_ckt[k], args.quant_bit_enh[layer_index-2], args.quant_axis if large_tf else -1) # pass delta between highest quality/full precision tensor, and the latest tensor uptil last enhancement layer
                     cur_ckt[k] = cur_ckt[k] + new_v # include/accumulate enhancement layer(s)
-                    #q_ssd[layer_index][k] = sum((a - b) ** 2 for a, b in zip(quant_v, new_v))
-                    #q_ssd_k[layer_index] = q_ssd_k[layer_index] + q_ssd[layer_index][k]
+            
                 
-                #v_sqr[layer_index-1] =  v_sqr[layer_index-1] + sum(a**2 for a in v)
-                #v_ssd[layer_index-1] = v_ssd[layer_index-1] + sum((a - b) ** 2 for a, b in zip(v, cur_ckt[k]))
-                v_ssd[layer_index-1] = v_ssd[layer_index-1] + ((v-cur_ckt[k])**2).sum()
-                
-                
-                layer_index = layer_index + 1
+                v_ssd[layer_index-1] = v_ssd[layer_index-1] + ((v-cur_ckt[k])**2).sum() # calculating the power of the error signal for the particular precision layer
 
+                layer_index = layer_index + 1
+            ###########
 
                 valid_quant_v = quant_v[v!=0] # only include non-zero weights
                 quant_weight_list.append(valid_quant_v.flatten())
 
-            ####### Testing:
-            # quant_v, new_v = quantize_per_tensor(v, args.quant_bit*layer_index, args.quant_axis if large_tf else -1)
-            # check_v = cur_ckt[k] - new_v
-            # stop = 1
-
             #############################
 
+        ###########
+        # Calculating and reporting sqnr. Every precision layer will have the sqnr that is associated to it
         layer_index = 1
         for layer_index in range(1, args.num_prec_layers+1): # for base layer and every enhancement layer
-            sqnr[layer_index-1] = 10 * math.log10(v_sqr/v_ssd[layer_index-1])
+            sqnr[layer_index-1] = 10 * math.log10(v_sqr/v_ssd[layer_index-1]) # The assumption is that as more enhacement layers are included, sqnr becomes bigger/better
             layer_index = layer_index + 1
+
+            if layer_index == 1:
+                print_str = f'SQNR for base layer is: {sqnr[0]}'
+                print(print_str)
+                if local_rank in [0, None]:
+                    with open('{}/eval.txt'.format(args.outf), 'a') as f:
+                        f.write(print_str + '\n')
+            else:
+                print_str = f'SQNR after including {layer_index-1} enhancement layer(s) is: {sqnr[layer_index-1]}'
+                print(print_str)
+                if local_rank in [0, None]:
+                    with open('{}/eval.txt'.format(args.outf), 'a') as f:
+                        f.write(print_str + '\n')
+        ###########
 
 
         cat_param = torch.cat(quant_weight_list)

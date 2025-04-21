@@ -8,6 +8,45 @@ import torch.nn as nn
 import torch.nn.functional as F
 from pytorch_msssim import ms_ssim, ssim
 
+###############################################
+# snerv
+# Adding some utility functions to evaluate various modes of quantization with the scalability feature
+###############################################
+
+def quantize_per_tensor_mdlns(t, bit=8, sec_base=3, sec_base_bits=3):
+    
+    #if sec_base == -1:
+        #sweep mode, which will loop across multiple potential second base values and select the one that gives the highest QSNR
+        #note that in this case, this method will need to calculate a QSNR value for the reconstructed tensor versus passed one
+        #for now this code is commented as we are not yet testing the sweep version
+
+    qt = torch.empty_like(t)
+    nt = torch.empty_like(t)
+    flat_t = t.view(-1)
+    flat_qt = qt.view(-1)
+    flat_nt = nt.view(-1)
+    
+    for i in range(flat_t.shape[0]):
+        flat_qt[i], flat_nt[i] = quantize_element_mdlns(flat_t[i], bit, sec_base, sec_base_bits)
+           
+    return sec_base, qt, nt
+
+###############################################
+
+def quantize_element_mdlns(x, bit=8, sec_base=3, sec_base_bits=3):
+    
+    bin_base_bits = bit - sec_base_bits - 1
+
+    # x = sx 2^bx 3^tx
+    #2-D loop to get the representation with the lowest error
+    #qx will have a concatenated representation {sign}{bitsb}{bitst}
+    #nx will have the lowest noise representation found
+    
+           
+    return qx, nx
+
+###############################################
+
 def quantize_per_tensor(t, bit=8, axis=-1):
     if axis == -1:
         t_valid = t!=0

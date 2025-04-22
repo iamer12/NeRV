@@ -32,17 +32,68 @@ def quantize_per_tensor_mdlns(t, bit=8, sec_base=3, sec_base_bits=3):
     return sec_base, qt, nt
 
 ###############################################
+# Handle signed to unsigned conversion
+def signed_to_unsigned(val, bits):
+    if val < 0:
+        val = (1 << bits) + val  # two's complement
+    return val
+###############################################
+
+def encode_qx(signx, bx_min, tx_min, bin_base_bits, sec_base_bits):
+    # Total number of bits
+    #bit = 1 + bin_base_bits + sec_base_bits
+
+    # Convert each component to its unsigned form
+    sign_bit = 0 if signx >= 0 else 1
+    bx_unsigned = signed_to_unsigned(bx_min, bin_base_bits)
+    tx_unsigned = signed_to_unsigned(tx_min, sec_base_bits)
+
+    # Concatenate bits: signx | bx_min | tx_min
+    qx = (sign_bit << (bin_base_bits + sec_base_bits)) | (bx_unsigned << sec_base_bits) | tx_unsigned
+    # Notice that qx is representable in bit number of bits where bit = 1 + bin_base_bits + sec_base_bits
+
+    #return qx, bit
+    return qx
+###############################################
+# Compute ranges for signed integers
+def get_signed_range(bits):
+    min_val = -2**(bits - 1)
+    max_val = 2**(bits - 1) - 1
+    return range(min_val, max_val + 1)
+###############################################
 
 def quantize_element_mdlns(x, bit=8, sec_base=3, sec_base_bits=3):
-    
-    bin_base_bits = bit - sec_base_bits - 1
-
     # x = sx 2^bx 3^tx
     #2-D loop to get the representation with the lowest error
-    #qx will have a concatenated representation {sign}{bitsb}{bitst}
+    #qx will have a concatenated representation {signx}{bx_min}{tx_min}
     #nx will have the lowest noise representation found
-    
-           
+
+    bin_base_bits = bit - sec_base_bits - 1
+
+    signx = 1 if x >= 0 else -1
+    bx_range = get_signed_range(bin_base_bits)
+    tx_range = get_signed_range(sec_base_bits)  # For easiness, I called it tx as "trenary exponent of x". It is known that it does not have to be "trenary" per se, and that the second (non binary) exponent can be anything
+
+    abs_error_min = float('inf')
+    bx_min = None
+    tx_min = None
+    nx = None
+
+    # Brute-force search
+    for bx in bx_range:
+        for tx in tx_range:
+            candidate = signx * (2 ** bx) * (sec_base ** tx)
+            abs_error = abs(x - candidate)
+            if abs_error < abs_error_min:
+                abs_error_min = abs_error
+                bx_min = bx
+                tx_min = tx
+                nx = candidate
+
+
+    #qx, bit = encode_qx(signx, bx_min, tx_min, bin_base_bits, sec_base_bits)
+    qx = encode_qx(signx, bx_min, tx_min, bin_base_bits, sec_base_bits)
+          
     return qx, nx
 
 ###############################################

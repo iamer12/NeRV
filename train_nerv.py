@@ -91,7 +91,8 @@ def main():
     parser.add_argument('--eval_only', action='store_true', default=False, help='do evaluation only')
     parser.add_argument('--eval_freq', type=int, default=50, help='evaluation frequency,  added to suffix!!!!')
     parser.add_argument('--quant_bit', type=int, default=-1, help='bit length for model quantization')
-    parser.add_argument('--quant_axis', type=int, default=0, help='quantization axis (-1 means per tensor)')
+    #parser.add_argument('--quant_axis', type=int, default=0, help='quantization axis (-1 means per tensor)')
+    parser.add_argument('--quant_axis', type=int, default=-1, help='quantization axis (-1 means per tensor)')
     parser.add_argument('--dump_images', action='store_true', default=False, help='dump the prediction images')
     parser.add_argument('--eval_fps', action='store_true', default=False, help='fwd multiple times to test the fps ')
 
@@ -508,6 +509,12 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
 
             v_sqr = v_sqr + (v ** 2).sum()  # calculating the power of the signal (note that I ommitted the division by the signal length since the numerator and denimunator have the same length and hence will cancel each other)
 
+            print_str = f'Processing a tensor whose length is {len(v)}'
+            print(print_str)
+            if local_rank in [0, None]:
+                with open('{}/eval.txt'.format(args.outf), 'a') as f:
+                    f.write(print_str + '\n')
+
             ###########
             layer_index = 1
             for layer_index in range(1, args.num_prec_layers+1): # for base layer and every enhancement layer
@@ -636,6 +643,12 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
             with open('{}/eval.txt'.format(args.outf), 'a') as f:
                 f.write(print_str + '\n')
         
+        print_str = f'The quantization mode used is {args.qmode}'
+        print(print_str)
+        if local_rank in [0, None]:
+            with open('{}/eval.txt'.format(args.outf), 'a') as f:
+                f.write(print_str + '\n')
+
         print_str = f'Total number of precision layers is {args.num_prec_layers}'
         print(print_str)
         if local_rank in [0, None]:

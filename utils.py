@@ -20,6 +20,37 @@ def quantize_per_tensor_mdlns(t, bit=8, sec_base=3, sec_base_bits=3):
         #note that in this case, this method will need to calculate a QSNR value for the reconstructed tensor versus passed one
         #for now this code is commented as we are not yet testing the sweep version
 
+    
+    #t_valid = t!=0
+    #t_min, t_max =  t[t_valid].min(), t[t_valid].max()
+    # replaced the above line with this one below because it would eventually trigger a run-time error when passed input tensor is all zeros. Keeping it like this likely leads to inputs traversing to outputs untouched
+    #abs_t_min, abs_t_max =  abs(t).min(), abs(t).max()
+
+    t_min, t_max =  t.min(), t.max()
+
+    half_delta = (t_max - t_min)/2
+
+    first_base_bits = bit - sec_base_bits - 1
+
+    max_sec_base_exp = (2 ** (sec_base_bits-1)) - 1
+    max_first_base_exp = (2 ** (first_base_bits-1)) - 1
+
+    min_sec_base_exp = -(2 ** (sec_base_bits-1))
+    min_first_base_exp = -(2 ** (first_base_bits-1))
+
+    abs_range_max = (2**max_first_base_exp) * (sec_base**max_sec_base_exp)
+    abs_range_min = (2**min_first_base_exp) * (sec_base**min_sec_base_exp)
+
+    offset = half_delta - t_max
+
+    scale = abs_range_max/half_delta
+
+    #scale = (abs_t_max - abs_t_min) / 2**bit
+
+    # offset = abs_t_min - abs_range_min
+    # scale = abs_range_max/(abs_t_max-offset)
+
+    
     qt = torch.empty_like(t)
     nt = torch.empty_like(t)
     flat_t = t.view(-1)
@@ -27,8 +58,19 @@ def quantize_per_tensor_mdlns(t, bit=8, sec_base=3, sec_base_bits=3):
     flat_nt = nt.view(-1)
     
     for i in range(flat_t.shape[0]):
-        flat_qt[i], flat_nt[i] = quantize_element_mdlns(flat_t[i], bit, sec_base, sec_base_bits)
-           
+        if flat_t[i] >= 0: signti = 0
+        else: signti = 1
+        #flat_qt[i], flat_nt[i] = quantize_element_mdlns(((-1)**signti)*(abs(flat_t[i])-offset)*scale, bit, sec_base, sec_base_bits)
+        flat_qt[i], flat_nt[i] = quantize_element_mdlns((flat_t[i]+offset)*scale, bit, sec_base, sec_base_bits)
+        #flat_qt[i], flat_nt[i] = quantize_element_mdlns(flat_t[i], bit, sec_base, sec_base_bits)
+
+    # qt = ((t - abs_t_min) / (scale + 1e-19)).round()
+    # nt = abs_t_min + scale * qt
+
+    #nt = ((-1)**signti) * (offset + (nt.abs() / (scale + 1e-19)).round())
+    nt = (nt / (scale + 1e-19).round())-offset
+    #nt = nt
+
     return sec_base, qt, nt
 
 ###############################################
@@ -79,10 +121,14 @@ def quantize_element_mdlns(x, bit=8, sec_base=3, sec_base_bits=3):
     tx_min = None
     nx = None
 
+    #rep_values = [0] * (2**bin_base_bits) * (2**sec_base_bits)
+    #i = 0
     # Brute-force search
     for bx in bx_range:
         for tx in tx_range:
             candidate = signx * (2 ** bx) * (sec_base ** tx)
+            #rep_values[i] = abs(candidate)
+            #i = i + 1
             abs_error = abs(x - candidate)
             if abs_error < abs_error_min:
                 abs_error_min = abs_error
@@ -90,6 +136,7 @@ def quantize_element_mdlns(x, bit=8, sec_base=3, sec_base_bits=3):
                 tx_min = tx
                 nx = candidate
 
+    #rep_values = sorted(rep_values)
 
     #qx, bit = encode_qx(signx, bx_min, tx_min, bin_base_bits, sec_base_bits)
     qx = encode_qx(signx, bx_min, tx_min, bin_base_bits, sec_base_bits)
@@ -101,7 +148,7 @@ def quantize_element_mdlns(x, bit=8, sec_base=3, sec_base_bits=3):
 def quantize_per_tensor(t, bit=8, axis=-1):
     if axis == -1:
         t_valid = t!=0
-        # t_min, t_max =  t[t_valid].min(), t[t_valid].max()
+        #t_min, t_max =  t[t_valid].min(), t[t_valid].max()
         # replaced the above line with this one below because it would eventually trigger a run-time error when passed input tensor is all zeros. Keeping it like this likely leads to inputs traversing to outputs untouched
         t_min, t_max =  t.min(), t.max() 
         

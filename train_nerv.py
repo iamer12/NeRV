@@ -514,12 +514,6 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
 
             v_sqr = v_sqr + (v ** 2).sum()  # calculating the power of the signal (note that I ommitted the division by the signal length since the numerator and denimunator have the same length and hence will cancel each other)
 
-            print_str = f'Processing a tensor whose length is {len(v)}'
-            print(print_str)
-            if local_rank in [0, None]:
-                with open('{}/eval.txt'.format(args.outf), 'a') as f:
-                    f.write(print_str + '\n')
-
             ###########
             layer_index = 1
             for layer_index in range(1, args.num_prec_layers+1): # for base layer and every enhancement layer
@@ -536,7 +530,6 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
                     if args.qmode == 'integer':
                         quant_v, new_v = quantize_per_tensor(v-cur_ckt[k], args.quant_bit_enh[layer_index-2], args.quant_axis if large_tf else -1) # pass delta between highest quality/full precision tensor, and the latest tensor uptil last enhancement layer
                     elif args.qmode == 'mdlns':
-                        #quant_v, new_v = quantize_per_tensor_mdlns(v-cur_ckt[k], args.quant_bit_enh[layer_index-2], args.mdlns_second_base, args.mdlns_second_base_exp_num_bits[layer_index-1], args.quant_axis if large_tf else -1) # pass delta between highest quality/full precision tensor, and the latest tensor uptil last enhancement layer
                         quant_v, new_v = quantize_per_tensor_mdlns(v-cur_ckt[k], args.quant_bit_enh[layer_index-2], args.mdlns_second_base, args.mdlns_second_base_exp_num_bits[layer_index-1], args.mdlns_align_ranges, args.mdlns_handle_zeros, args.quant_axis if large_tf else -1) # pass delta between highest quality/full precision tensor, and the latest tensor uptil last enhancement layer
                     
                     

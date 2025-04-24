@@ -153,9 +153,7 @@
           "--quant_bit_enh", "5", "5", "5",
           "--qmode", "mdlns",
           "--mdlns_second_base", "3",
-          "--mdlns_second_base_exp_num_bits", "2", "2", "2", "2",
-          "--mdlns_align_ranges", "2",
-          "--mdlns_handle_zeros", "0"
+          "--mdlns_second_base_exp_num_bits", "2", "2", "2", "2"
         ]
       }
 

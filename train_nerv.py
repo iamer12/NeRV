@@ -54,11 +54,6 @@ def main():
     parser.add_argument('--mdlns_second_base_exp_num_bits', type=int, nargs='+', default=[3, 3, 3, 3], help='for every precision layer, number of bits allocated for the quantized exponent of the second base for MDLNS')
     # Notice that there is a bit reserved for the sign of the number. So the number of bits left to represent the binary exponent will be quant_bit[precision_layer] - mdlns_second_base_exp_num_bits[precision_layer] - 1
     # User needs to make sure that the math adds up. Didn't bother doing the sanity checks
-    parser.add_argument('--mdlns_align_ranges', type=int, default=0, help='Set to 1 if you want to offset/scale the range of tensor values to match the range or MDLNS representable values before quantization')
-    parser.add_argument('--mdlns_handle_zeros', type=int, default=1, help='Set to 1 if you want to manually map the MDLNS code with the lowest magnitude to zero')
-    # This process helps reducing the overall quantization noise since many tensor values are zeros, while an exponential numbering system cannot have a code that corresponds to exact zero
-    
-    
 
     # embedding parameters
     parser.add_argument('--embed', type=str, default='1.25_80', help='base value/embed length for position encoding')
@@ -522,7 +517,7 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
                     if args.qmode == 'integer':
                         quant_v, new_v = quantize_per_tensor(v, args.quant_bit, args.quant_axis if large_tf else -1) # pass highest quality/full precision tensor
                     elif args.qmode == 'mdlns':
-                        quant_v, new_v = quantize_per_tensor_mdlns(v, args.quant_bit, args.mdlns_second_base, args.mdlns_second_base_exp_num_bits[0], args.mdlns_align_ranges, args.mdlns_handle_zeros, args.quant_axis if large_tf else -1) # pass highest quality/full precision tensor
+                        quant_v, new_v = quantize_per_tensor_mdlns(v, args.quant_bit, args.mdlns_second_base, args.mdlns_second_base_exp_num_bits[0], args.quant_axis if large_tf else -1) # pass highest quality/full precision tensor
 
                     cur_ckt[k] = new_v
             
@@ -530,7 +525,7 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
                     if args.qmode == 'integer':
                         quant_v, new_v = quantize_per_tensor(v-cur_ckt[k], args.quant_bit_enh[layer_index-2], args.quant_axis if large_tf else -1) # pass delta between highest quality/full precision tensor, and the latest tensor uptil last enhancement layer
                     elif args.qmode == 'mdlns':
-                        quant_v, new_v = quantize_per_tensor_mdlns(v-cur_ckt[k], args.quant_bit_enh[layer_index-2], args.mdlns_second_base, args.mdlns_second_base_exp_num_bits[layer_index-1], args.mdlns_align_ranges, args.mdlns_handle_zeros, args.quant_axis if large_tf else -1) # pass delta between highest quality/full precision tensor, and the latest tensor uptil last enhancement layer
+                        quant_v, new_v = quantize_per_tensor_mdlns(v-cur_ckt[k], args.quant_bit_enh[layer_index-2], args.mdlns_second_base, args.mdlns_second_base_exp_num_bits[layer_index-1], args.quant_axis if large_tf else -1) # pass delta between highest quality/full precision tensor, and the latest tensor uptil last enhancement layer
                     
                     
                     cur_ckt[k] = cur_ckt[k] + new_v # include/accumulate enhancement layer(s)

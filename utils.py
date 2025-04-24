@@ -13,7 +13,7 @@ from pytorch_msssim import ms_ssim, ssim
 # Adding some utility functions to evaluate various modes of quantization with the scalability feature
 ###############################################
 
-def quantize_per_tensor_mdlns(t, bit=8, sec_base=3, sec_base_bits=3, align_ranges=2, handle_zeros=1, axis=-1):
+def quantize_per_tensor_mdlns(t, bit=8, sec_base=3, sec_base_bits=3, axis=-1):
     
     #if sec_base == -1:
         #sweep mode, which will loop across multiple potential second base values and select the one that gives the highest QSNR
@@ -26,10 +26,7 @@ def quantize_per_tensor_mdlns(t, bit=8, sec_base=3, sec_base_bits=3, align_range
 
     qt = torch.empty_like(t)
     nt = torch.empty_like(t)
-    # flat_t = t.view(-1)
-    # flat_qt = qt.view(-1)
-    # flat_nt = nt.view(-1)
-
+   
 
     first_base_bits = bit - sec_base_bits - 1
 
@@ -49,31 +46,10 @@ def quantize_per_tensor_mdlns(t, bit=8, sec_base=3, sec_base_bits=3, align_range
             b_lut[index] = bx
             t_lut[index] = tx
             index = index + 1
-
-
-    # if align_ranges == 0:
-    #     for i in range(flat_t.shape[0]):
-    #         flat_qt[i], flat_nt[i] = quantize_element_mdlns(flat_t[i], conv_lut, b_lut, t_lut, bit, sec_base, sec_base_bits, handle_zeros)
-    # elif align_ranges == 1:
-    #     t_min, t_max =  t.min(), t.max()
-    #     half_delta = (t_max - t_min)/2
-    #     offset = half_delta - t_max
-    #     max_sec_base_exp = (2 ** (sec_base_bits-1)) - 1
-    #     max_first_base_exp = (2 ** (first_base_bits-1)) - 1
-    #     abs_range_max = (2**max_first_base_exp) * (sec_base**max_sec_base_exp)
-    #     scale = abs_range_max/half_delta
-    #     for i in range(flat_t.shape[0]):
-    #         flat_qt[i], flat_nt[i] = quantize_element_mdlns((flat_t[i]+offset)*scale, conv_lut, b_lut, t_lut, bit, sec_base, sec_base_bits, 0) # passing zero for handle_zeros since you do not want to suppress small values after adding the offset and scaling
-        
-    #     nt = (nt / (scale + 1e-19).round())-offset
-    # else:
          
     qt, nt = map_range(t, conv_lut, b_lut, t_lut, bit, sec_base_bits)
         
-    
     return qt, nt
-
-   
 ###############################################
 def map_range(t, conv_lut, b_lut, nb_lut, bit=8, sec_base_bits=3):
     # t --> tensor, b --> binary, nb --> non-binary, conv --> integer to MDLNS conversion LUT
@@ -84,7 +60,6 @@ def map_range(t, conv_lut, b_lut, nb_lut, bit=8, sec_base_bits=3):
     b_lut_expanded = torch.tensor(b_lut + b_lut)
     nb_lut_expanded = torch.tensor(nb_lut + nb_lut)
 
-
     t_min, t_max = t.min(), t.max()
     lut_min, lut_max = conv_lut_signed.min(), conv_lut_signed.max()
 
@@ -94,20 +69,16 @@ def map_range(t, conv_lut, b_lut, nb_lut, bit=8, sec_base_bits=3):
 
     # Compute differences and get indices of closest LUT entries
     diff = torch.abs(t_scaled.unsqueeze(-1) - conv_lut_signed)
-
     indices = torch.argmin(diff, dim=-1)  # shape: (B, L)
-
 
     # Quantized values using those indices
     t_dequantized = conv_lut_signed[indices]  # shape: (B, L)
- 
-    
+     
     # Reconstruct t in the original range
     # Reverse scaling: map from [lut_min, lut_max] back to [t_min, t_max]
     t_reconstructed = (t_dequantized - lut_min) / (lut_max - lut_min)
     t_reconstructed = t_reconstructed * (t_max - t_min) + t_min
-
-    
+   
     # Adding code
     b_dequantized = b_lut_expanded[indices]
     nb_dequantized = nb_lut_expanded[indices]
@@ -117,18 +88,14 @@ def map_range(t, conv_lut, b_lut, nb_lut, bit=8, sec_base_bits=3):
     qt = encode_qt_vector(t, b_dequantized, nb_dequantized, bin_base_bits, sec_base_bits)
     #notice that I am passing "t" as the first argument to use it to extract the signs later in the function
 
-
     return qt, t_reconstructed
-
 ###############################################
-
 def signed_to_unsigned_vector(val, bits):
     # Convert signed integers to unsigned using two's complement, vectorized
     mask = val < 0
     result = val.clone()
     result[mask] = (1 << bits) + val[mask]
     return result
-
 ###############################################
 def encode_qt_vector(signt, bt_min, tt_min, bin_base_bits, sec_base_bits):
     sign_bit = (signt < 0).int()  # 1 if negative, else 0
@@ -142,85 +109,14 @@ def encode_qt_vector(signt, bt_min, tt_min, bin_base_bits, sec_base_bits):
 
     return qt
 ###############################################
-# def min_non_negative(lst):
-#     non_negatives = [x for x in lst if x >= 0]
-#     return min(non_negatives) if non_negatives else None  # or float('inf') or raise an exception
-###############################################
-# def min_negative(lst):
-#     negatives = [x for x in lst if x < 0]
-#     return min(negatives) if negatives else None  # or float('inf') or raise an exception
-###############################################
-# def average_non_negative(t):
-#     mask = t >= 0
-#     if mask.sum() == 0:
-#         return torch.tensor(0.0, device=t.device)  # or raise an exception
-#     return t[mask].mean()
-###############################################
-# def average_negative(t):
-#     mask = t < 0
-#     if mask.sum() == 0:
-#         return torch.tensor(0.0, device=t.device)  # or raise an exception
-#     return t[mask].mean()
-###############################################
-# Handle signed to unsigned conversion
-# def signed_to_unsigned(val, bits):
-#     if val < 0:
-#         val = (1 << bits) + val  # two's complement
-#     return val
-###############################################
-
-# def encode_qx(signx, bx_min, tx_min, bin_base_bits, sec_base_bits):
-   
-#     # Convert each component to its unsigned form
-#     sign_bit = 0 if signx >= 0 else 1
-#     bx_unsigned = signed_to_unsigned(bx_min, bin_base_bits)
-#     tx_unsigned = signed_to_unsigned(tx_min, sec_base_bits)
-
-#     # Concatenate bits: signx | bx_min | tx_min
-#     qx = (sign_bit << (bin_base_bits + sec_base_bits)) | (bx_unsigned << sec_base_bits) | tx_unsigned
-#     # Notice that qx is representable in bit number of bits where bit = 1 + bin_base_bits + sec_base_bits
-
-#     #return qx, bit
-#     return qx
-###############################################
 # Compute ranges for signed integers
 def get_signed_range(bits):
     min_val = -2**(bits - 1)
     max_val = 2**(bits - 1) - 1
     return range(min_val, max_val + 1)
 ###############################################
-
-# def quantize_element_mdlns(x, conv_lut, b_lut, t_lut, bit=8, sec_base=3, sec_base_bits=3, handle_zeros=1):
-#     # x = sx 2^bx 3^tx
-#     #2-D loop to get the representation with the lowest error
-#     #qx will have a concatenated representation {signx}{bx_min}{tx_min}
-#     #nx will have the lowest noise representation found
-
-#     bin_base_bits = bit - sec_base_bits - 1
-
-#     signx = 1 if x >= 0 else -1
-    
-#     c_lut = [abs(val - abs(x)) for val in conv_lut]
-
-#     index = c_lut.index(min(c_lut))   # return the LUT index of the value that has the lowest abs difference with the input
-
-#     bx_min = b_lut[index]
-#     tx_min = t_lut[index]
-    
-    
-#     nx = signx * conv_lut[index]
-
-#     #Any positive of negative number whose reconstructed magnitude is the min representable by the exponent ranges will be forced to zero
-#     if handle_zeros == 1:
-#         if index == conv_lut.index(min(conv_lut)):
-#             nx = 0
-
-#     qx = encode_qx(signx, bx_min, tx_min, bin_base_bits, sec_base_bits)
-          
-#     return qx, nx
-
 ###############################################
-
+###############################################
 def quantize_per_tensor(t, bit=8, axis=-1):
     if axis == -1:
         t_valid = t!=0

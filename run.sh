@@ -37,7 +37,7 @@ python train_nerv.py -e 100   --lower-width 96 --num-blocks 1 --dataset bunny --
     --single_res --loss Fusion6   --warmup 0. --lr_type cosine  --strides 5 2 2 2 2  --conv_type conv \
     -b 1  --lr 0.0005 --norm none --suffix 107  --act swish \
     --weight checkpoints/nerv_S_pruned.pth --prune_ratio 0.4  --eval_only --quant_bit 5 --quant_axis 0 --num_frames 2 --num_prec_layers 2 --quant_bit_enh 5 5 5 \
-    --qmode mdlns --mdlns_second_base 3 --mdlns_second_base_exp_num_bits 2 2 2 2 --mdlns_align_ranges 2 --mdlns_handle_zeros 0
+    --qmode mdlns --mdlns_second_base 3 --mdlns_second_base_exp_num_bits 2 2 2 2
 
 #Evaluate quantized model command line from Git
 # python train_nerv.py -e 100   --lower-width 96 --num-blocks 1 --dataset bunny --frame_gap 1 \

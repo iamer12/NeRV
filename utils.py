@@ -13,12 +13,12 @@ from pytorch_msssim import ms_ssim, ssim
 # Adding some utility functions to evaluate various modes of quantization with the scalability feature
 ###############################################
 
-def quantize_per_tensor_mdlns(t, bit=8, sec_base=3, sec_base_bits=3, axis=-1):
+def quantize_per_tensor_mdlns(t, bit=8, sec_base=3, sec_base_bits=3, start=0.1, end=5.0, step=0.1, axis=-1):
     
     #if sec_base == -1:
         #sweep mode, which will loop across multiple potential second base values and select the one that gives the highest QSNR
         #note that in this case, this method will need to calculate a QSNR value for the reconstructed tensor versus passed one
-        #for now this code is commented as we are not yet testing the sweep version
+        #for now this code is commented as we are not yet testing the sweep 
 
     #t_valid = t!=0
     #t_min, t_max =  t[t_valid].min(), t[t_valid].max()
@@ -26,30 +26,76 @@ def quantize_per_tensor_mdlns(t, bit=8, sec_base=3, sec_base_bits=3, axis=-1):
 
     qt = torch.empty_like(t)
     nt = torch.empty_like(t)
-   
 
+    c_qt = torch.empty_like(t)
+    c_nt = torch.empty_like(t)
+   
     first_base_bits = bit - sec_base_bits - 1
 
     bx_range = get_signed_range(first_base_bits)
     tx_range = get_signed_range(sec_base_bits)  # For easiness, I called it tx as "trenary exponent of x". It is known that it does not have to be "trenary" per se, and that the second (non binary) exponent can be anything
-
 
     # Compose conversion LUT
     size_of_lut = (bx_range.stop-bx_range.start) * (tx_range.stop-tx_range.start)
     conv_lut = [0] * size_of_lut    # array for the conversion value of (2 ** bx) * (sec_base ** tx)
     b_lut = [0] * size_of_lut       # arrary for the binary (first) exponent
     t_lut = [0] * size_of_lut       # array for the trenary (second) exponent
-    index = 0
-    for bx in bx_range:
-        for tx in tx_range:
-            conv_lut[index] = (2 ** bx) * (sec_base ** tx)
-            b_lut[index] = bx
-            t_lut[index] = tx
-            index = index + 1
-         
-    qt, nt = map_range(t, conv_lut, b_lut, t_lut, bit, sec_base_bits)
+    
+    sec_base_selected = sec_base
+    if sec_base != 1000:
+        index = 0
+        for bx in bx_range:
+            for tx in tx_range:
+                conv_lut[index] = (2 ** bx) * (sec_base_selected ** tx)
+                b_lut[index] = bx
+                t_lut[index] = tx
+                index = index + 1
+        qt, nt = map_range(t, conv_lut, b_lut, t_lut, bit, sec_base_bits)
+    else:
+        candidate_sec_base = start
+        max_qsnr = float('-inf')
+        while candidate_sec_base <= end:
+            index = 0
+            for bx in bx_range:
+                for tx in tx_range:
+                    conv_lut[index] = (2 ** bx) * (candidate_sec_base ** tx)
+                    b_lut[index] = bx
+                    t_lut[index] = tx
+                    index = index + 1
+            c_qt, c_nt = map_range(t, conv_lut, b_lut, t_lut, bit, sec_base_bits)
+
+            c_qsnr = calc_qsnr(t, c_nt)
+            if c_qsnr > max_qsnr:
+                max_qsnr = c_qsnr
+                sec_base_selected = candidate_sec_base
+                qt = c_qt
+                nt = c_nt
+
+            candidate_sec_base = candidate_sec_base + step
+
         
-    return qt, nt
+    return sec_base_selected, qt, nt
+###############################################
+def calc_qsnr(original: torch.Tensor, noisy: torch.Tensor) -> float:
+    
+    # Calculates QSNR (Quantized Signal-to-Noise Ratio) in dB.
+    # QSNR = 10 * log10 (signal_power / noise_power)
+
+    # Parameters:
+    #     original (torch.Tensor): Original clean signal.
+    #     noisy (torch.Tensor): Noisy signal.
+
+    # Returns:
+    #     float: QSNR value in decibels.
+    
+    signal_power = torch.mean(original ** 2)
+    noise_power = torch.mean((original - noisy) ** 2)
+
+    if noise_power == 0:
+        return float('inf')  # Perfect reconstruction, infinite QSNR
+    
+    qsnr = 10 * torch.log10(signal_power / noise_power)
+    return qsnr.item()
 ###############################################
 def map_range(t, conv_lut, b_lut, nb_lut, bit=8, sec_base_bits=3):
     # t --> tensor, b --> binary, nb --> non-binary, conv --> integer to MDLNS conversion LUT

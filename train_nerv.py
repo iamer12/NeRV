@@ -50,7 +50,12 @@ def main():
 
     # snerv quantization mode specialized parameters
     # mdlns
-    parser.add_argument('--mdlns_second_base', type=int, default=3, help='Second base for MDLNS - default is 3. Use -1 if you want program to sweep for a "good" second base. First base is assumed to always be 2')
+    parser.add_argument('--mdlns_second_base', type=int, default=3, help='Second base for MDLNS - default is 3. Use 1000 if you want program to sweep for a "good" second base. First base is assumed to always be 2')
+    # If mdlns_second_base == -1, then a sweep/search for a second base will take place starting mdlns_sweep_start until mdlns_sweep_end with a step size of mdlns_sweep_step
+    parser.add_argument('--mdlns_sweep_start', type=float, default=0.1, help='If mdlns_second_base == 1000, then a sweep/search for a second base will take place starting mdlns_sweep_start until mdlns_sweep_end with a step size of mdlns_sweep_step')
+    parser.add_argument('--mdlns_sweep_end', type=float, default=5.0, help='If mdlns_second_base == 1000, then a sweep/search for a second base will take place starting mdlns_sweep_start until mdlns_sweep_end with a step size of mdlns_sweep_step')
+    parser.add_argument('--mdlns_sweep_step', type=float, default=0.1, help='If mdlns_second_base == 1000, then a sweep/search for a second base will take place starting mdlns_sweep_start until mdlns_sweep_end with a step size of mdlns_sweep_step')
+
     parser.add_argument('--mdlns_second_base_exp_num_bits', type=int, nargs='+', default=[3, 3, 3, 3], help='for every precision layer, number of bits allocated for the quantized exponent of the second base for MDLNS')
     # Notice that there is a bit reserved for the sign of the number. So the number of bits left to represent the binary exponent will be quant_bit[precision_layer] - mdlns_second_base_exp_num_bits[precision_layer] - 1
     # User needs to make sure that the math adds up. Didn't bother doing the sanity checks
@@ -499,6 +504,7 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
         v_sqr = 0
         v_ssd = [0] * args.num_prec_layers
         sqnr = [0] * args.num_prec_layers
+        sec_base_selected = [0] * args.num_prec_layers     # If a sweep for second base is activated, every precision layer will have its selected second based stored in the corresponding element of this list
         ###########
         
         for k,v in cur_ckt.items():            
@@ -517,7 +523,7 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
                     if args.qmode == 'integer':
                         quant_v, new_v = quantize_per_tensor(v, args.quant_bit, args.quant_axis if large_tf else -1) # pass highest quality/full precision tensor
                     elif args.qmode == 'mdlns':
-                        quant_v, new_v = quantize_per_tensor_mdlns(v, args.quant_bit, args.mdlns_second_base, args.mdlns_second_base_exp_num_bits[0], args.quant_axis if large_tf else -1) # pass highest quality/full precision tensor
+                        sec_base_selected[layer_index-1], quant_v, new_v = quantize_per_tensor_mdlns(v, args.quant_bit, args.mdlns_second_base, args.mdlns_second_base_exp_num_bits[0], args.mdlns_sweep_start, args.mdlns_sweep_end, args.mdlns_sweep_step, args.quant_axis if large_tf else -1) # pass highest quality/full precision tensor
 
                     cur_ckt[k] = new_v
             
@@ -525,7 +531,7 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
                     if args.qmode == 'integer':
                         quant_v, new_v = quantize_per_tensor(v-cur_ckt[k], args.quant_bit_enh[layer_index-2], args.quant_axis if large_tf else -1) # pass delta between highest quality/full precision tensor, and the latest tensor uptil last enhancement layer
                     elif args.qmode == 'mdlns':
-                        quant_v, new_v = quantize_per_tensor_mdlns(v-cur_ckt[k], args.quant_bit_enh[layer_index-2], args.mdlns_second_base, args.mdlns_second_base_exp_num_bits[layer_index-1], args.quant_axis if large_tf else -1) # pass delta between highest quality/full precision tensor, and the latest tensor uptil last enhancement layer
+                        sec_base_selected[layer_index-1], quant_v, new_v = quantize_per_tensor_mdlns(v-cur_ckt[k], args.quant_bit_enh[layer_index-2], args.mdlns_second_base, args.mdlns_second_base_exp_num_bits[layer_index-1], args.mdlns_sweep_start, args.mdlns_sweep_end, args.mdlns_sweep_step, args.quant_axis if large_tf else -1) # pass delta between highest quality/full precision tensor, and the latest tensor uptil last enhancement layer
                     
                     
                     cur_ckt[k] = cur_ckt[k] + new_v # include/accumulate enhancement layer(s)

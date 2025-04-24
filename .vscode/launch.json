@@ -149,7 +149,7 @@
           "--quant_bit", "5",
           "--quant_axis", "0",
           "--num_frames", "2",
-          "--num_prec_layers", "2",
+          "--num_prec_layers", "1",
           "--quant_bit_enh", "5", "5", "5",
           "--qmode", "mdlns",
           "--mdlns_second_base", "3",

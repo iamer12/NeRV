@@ -13,66 +13,243 @@ from pytorch_msssim import ms_ssim, ssim
 # Adding some utility functions to evaluate various modes of quantization with the scalability feature
 ###############################################
 
-def quantize_per_tensor_mdlns(t, bit=8, sec_base=3, sec_base_bits=3):
+def quantize_per_tensor_mdlns(t, bit=8, sec_base=3, sec_base_bits=3, align_ranges=2, handle_zeros=1, axis=-1):
     
     #if sec_base == -1:
         #sweep mode, which will loop across multiple potential second base values and select the one that gives the highest QSNR
         #note that in this case, this method will need to calculate a QSNR value for the reconstructed tensor versus passed one
         #for now this code is commented as we are not yet testing the sweep version
 
-    
     #t_valid = t!=0
     #t_min, t_max =  t[t_valid].min(), t[t_valid].max()
     # replaced the above line with this one below because it would eventually trigger a run-time error when passed input tensor is all zeros. Keeping it like this likely leads to inputs traversing to outputs untouched
     #abs_t_min, abs_t_max =  abs(t).min(), abs(t).max()
 
-    t_min, t_max =  t.min(), t.max()
-
-    half_delta = (t_max - t_min)/2
-
-    first_base_bits = bit - sec_base_bits - 1
-
-    max_sec_base_exp = (2 ** (sec_base_bits-1)) - 1
-    max_first_base_exp = (2 ** (first_base_bits-1)) - 1
-
-    min_sec_base_exp = -(2 ** (sec_base_bits-1))
-    min_first_base_exp = -(2 ** (first_base_bits-1))
-
-    abs_range_max = (2**max_first_base_exp) * (sec_base**max_sec_base_exp)
-    abs_range_min = (2**min_first_base_exp) * (sec_base**min_sec_base_exp)
-
-    offset = half_delta - t_max
-
-    scale = abs_range_max/half_delta
-
-    #scale = (abs_t_max - abs_t_min) / 2**bit
-
-    # offset = abs_t_min - abs_range_min
-    # scale = abs_range_max/(abs_t_max-offset)
-
-    
     qt = torch.empty_like(t)
     nt = torch.empty_like(t)
     flat_t = t.view(-1)
     flat_qt = qt.view(-1)
     flat_nt = nt.view(-1)
+
+
+    first_base_bits = bit - sec_base_bits - 1
+
+    #signx = 1 if x >= 0 else -1
+    bx_range = get_signed_range(first_base_bits)
+    tx_range = get_signed_range(sec_base_bits)  # For easiness, I called it tx as "trenary exponent of x". It is known that it does not have to be "trenary" per se, and that the second (non binary) exponent can be anything
+
+    #abs_error_min = float('inf')
+    #bx_min = None
+    #tx_min = None
+    #nx = None
+
+    # Compose conversion LUT
+    size_of_lut = (bx_range.stop-bx_range.start) * (tx_range.stop-tx_range.start)
+    conv_lut = [0] * size_of_lut    # array for the conversion value of (2 ** bx) * (sec_base ** tx)
+    b_lut = [0] * size_of_lut       # arrary for the binary (first) exponent
+    t_lut = [0] * size_of_lut       # array for the trenary (second) exponent
+    index = 0
+    for bx in bx_range:
+        for tx in tx_range:
+            conv_lut[index] = (2 ** bx) * (sec_base ** tx)
+            b_lut[index] = bx
+            t_lut[index] = tx
+            index = index + 1
+
+
+    if align_ranges == 0:
+        for i in range(flat_t.shape[0]):
+            flat_qt[i], flat_nt[i] = quantize_element_mdlns(flat_t[i], conv_lut, b_lut, t_lut, bit, sec_base, sec_base_bits, handle_zeros)
+    elif align_ranges == 1:
+        t_min, t_max =  t.min(), t.max()
+        half_delta = (t_max - t_min)/2
+        offset = half_delta - t_max
+        #first_base_bits = bit - sec_base_bits - 1
+        max_sec_base_exp = (2 ** (sec_base_bits-1)) - 1
+        max_first_base_exp = (2 ** (first_base_bits-1)) - 1
+        abs_range_max = (2**max_first_base_exp) * (sec_base**max_sec_base_exp)
+        scale = abs_range_max/half_delta
+        for i in range(flat_t.shape[0]):
+            flat_qt[i], flat_nt[i] = quantize_element_mdlns((flat_t[i]+offset)*scale, conv_lut, b_lut, t_lut, bit, sec_base, sec_base_bits, 0) # passing zero for handle_zeros since you do not want to suppress small values after adding the offset and scaling
+        
+        nt = (nt / (scale + 1e-19).round())-offset
+    else:
+    #     #abs_t_min, abs_t_max =  abs(t).min(), abs(t).max()
+         qt, nt = map_range(t, conv_lut, b_lut, t_lut, bit, sec_base_bits)
+        
+        
+        
     
-    for i in range(flat_t.shape[0]):
-        if flat_t[i] >= 0: signti = 0
-        else: signti = 1
-        #flat_qt[i], flat_nt[i] = quantize_element_mdlns(((-1)**signti)*(abs(flat_t[i])-offset)*scale, bit, sec_base, sec_base_bits)
-        flat_qt[i], flat_nt[i] = quantize_element_mdlns((flat_t[i]+offset)*scale, bit, sec_base, sec_base_bits)
+    
+    return qt, nt
+
+    #min_sec_base_exp = -(2 ** (sec_base_bits-1))
+    #min_first_base_exp = -(2 ** (first_base_bits-1))
+    #abs_range_min = (2**min_first_base_exp) * (sec_base**min_sec_base_exp)
+
+    
+
+    # mean_non_neg = average_non_negative(t)
+    # mean_neg = average_negative(t)
+
+    # offset_non_neg = mean_non_neg - min_non_negative(t)
+    # offset_neg = mean_neg - min_negative(t)
+
+    # scale_non_neg = abs_range_max/(abs_t_max-offset)
+
+    #scale = (abs_t_max - abs_t_min) / 2**bit
+
+    #offset = abs_t_min - abs_range_min
+    #scale = abs_range_max/(abs_t_max-offset)
+
+    
+   
+
+    #flat_nt2 = nt.view(-1)
+    
+    # for i in range(flat_t.shape[0]):
+    #     # if flat_t[i] >= 0: signti = 0
+    #     # else: signti = 1
+    #     #flat_qt[i], flat_nt[i] = quantize_element_mdlns(((-1)**signti)*(abs(flat_t[i])-offset)*scale, bit, sec_base, sec_base_bits)
+        
+    #     flat_qt[i], flat_nt[i] = quantize_element_mdlns(flat_t[i], bit, sec_base, sec_base_bits)
+        #### flat_qt[i], flat_nt[i] = quantize_element_mdlns((flat_t[i]+offset)*scale, bit, sec_base, sec_base_bits)
+        
+        
         #flat_qt[i], flat_nt[i] = quantize_element_mdlns(flat_t[i], bit, sec_base, sec_base_bits)
+
+    # for i in range(flat_t.shape[0]):
+    #     if flat_t[i] >= 0: 
+    #         flat_qt[i], flat_nt[i] = quantize_element_mdlns((flat_t[i]-offset_non_neg)*scale, bit, sec_base, sec_base_bits)
+    #     else:
+    #         #flat_qt[i], flat_nt[i] = quantize_element_mdlns(((-1)**signti)*(abs(flat_t[i])-offset)*scale, bit, sec_base, sec_base_bits)
+    #         flat_qt[i], flat_nt[i] = quantize_element_mdlns((flat_t[i]+offset)*scale, bit, sec_base, sec_base_bits)
+    #         #flat_qt[i], flat_nt[i] = quantize_element_mdlns(flat_t[i], bit, sec_base, sec_base_bits)
+
 
     # qt = ((t - abs_t_min) / (scale + 1e-19)).round()
     # nt = abs_t_min + scale * qt
 
     #nt = ((-1)**signti) * (offset + (nt.abs() / (scale + 1e-19)).round())
-    nt = (nt / (scale + 1e-19).round())-offset
-    #nt = nt
+    
+    ###nt = (nt / (scale + 1e-19).round())-offset
+    
+    # nt = nt
 
-    return sec_base, qt, nt
+    # You probably want to also return the second base if it was searched for, the scale if margins were aligned, and the quantized code for zero, if zeros had special handling
+    #return sec_base, qt, nt
 
+
+###############################################
+def map_range(t, conv_lut, b_lut, t_lut, bit=8, sec_base_bits=3):
+
+    # Zip the lists together, sort by conv_lut, then unzip
+    # combined = sorted(zip(conv_lut, b_lut, t_lut), key=lambda x: x[0])
+    # conv_lut_sorted, b_lut_sorted, t_lut_sorted = zip(*combined)
+
+    # # Convert back to lists
+    # conv_lut_s = list(conv_lut_sorted)
+    # b_lut_s = list(b_lut_sorted)
+    # t_lut_s = list(t_lut_sorted)
+
+    #conv_lut_signed = conv_lut + [-x for x in conv_lut] # conv_lut_signed  contains all the elements from conv_lut plus their negative counterparts
+    conv_lut_signed = torch.tensor(conv_lut + [-x for x in conv_lut]) # conv_lut_signed  contains all the elements from conv_lut plus their negative counterparts
+    # Notice that the above line also converts from conv_lut array to conv_lut_signed tensor
+    # b_lut_expanded = b_lut + b_lut
+    # t_lut_expanded = t_lut + t_lut
+
+    b_lut_expanded = torch.tensor(b_lut + b_lut)
+    t_lut_expanded = torch.tensor(t_lut + t_lut)
+
+    # abs_t_min, abs_t_max =  abs(t).min(), abs(t).max()
+
+    # abs_t = abs(t)
+
+    t_min, t_max = t.min(), t.max()
+    lut_min, lut_max = conv_lut_signed.min(), conv_lut_signed.max()
+    # lut_min, lut_max = min(conv_lut_signed), max(conv_lut_signed)
+
+    # Scale t to fit within the range of conv_lut_signed
+    t_scaled = (t - t_min) / (t_max - t_min)
+    t_scaled = t_scaled * (lut_max - lut_min) + lut_min
+
+    # Compute differences and get indices of closest LUT entries
+    #diff = torch.abs(t_scaled.unsqueeze(1) - conv_lut_signed.unsqueeze(0))
+    diff = torch.abs(t_scaled.unsqueeze(-1) - conv_lut_signed)
+
+    #indices = torch.argmin(diff, dim=1)
+    indices = torch.argmin(diff, dim=-1)  # shape: (B, L)
+
+
+    # Quantized values using those indices
+    # t_dequantized = conv_lut_signed[indices]
+    t_dequantized = conv_lut_signed[indices]  # shape: (B, L)
+
+
+    
+    
+    # Reconstruct t in the original range
+    # Reverse scaling: map from [lut_min, lut_max] back to [t_min, t_max]
+    t_reconstructed = (t_dequantized - lut_min) / (lut_max - lut_min)
+    t_reconstructed = t_reconstructed * (t_max - t_min) + t_min
+
+    
+    # Adding code
+    b_dequantized = b_lut_expanded[indices]
+    t_dequantized = t_lut_expanded[indices]
+
+    bin_base_bits = bit - sec_base_bits - 1
+
+    qt = encode_qt_vector(t, b_dequantized, t_dequantized, bin_base_bits, sec_base_bits)
+
+
+
+    return qt, t_reconstructed
+
+###############################################
+
+def signed_to_unsigned_vector(val, bits):
+    # Convert signed integers to unsigned using two's complement, vectorized
+    mask = val < 0
+    result = val.clone()
+    result[mask] = (1 << bits) + val[mask]
+    return result
+
+###############################################
+
+def encode_qt_vector(signt, bt_min, tt_min, bin_base_bits, sec_base_bits):
+    sign_bit = (signt < 0).int()  # 1 if negative, else 0
+
+    bt_unsigned = signed_to_unsigned_vector(bt_min, bin_base_bits)
+    tt_unsigned = signed_to_unsigned_vector(tt_min, sec_base_bits)
+
+    qt = (sign_bit << (bin_base_bits + sec_base_bits)) | \
+         (bt_unsigned << sec_base_bits) | \
+         tt_unsigned
+
+    return qt
+
+###############################################
+
+def min_non_negative(lst):
+    non_negatives = [x for x in lst if x >= 0]
+    return min(non_negatives) if non_negatives else None  # or float('inf') or raise an exception
+###############################################
+def min_negative(lst):
+    negatives = [x for x in lst if x < 0]
+    return min(negatives) if negatives else None  # or float('inf') or raise an exception
+###############################################
+def average_non_negative(t):
+    mask = t >= 0
+    if mask.sum() == 0:
+        return torch.tensor(0.0, device=t.device)  # or raise an exception
+    return t[mask].mean()
+###############################################
+def average_negative(t):
+    mask = t < 0
+    if mask.sum() == 0:
+        return torch.tensor(0.0, device=t.device)  # or raise an exception
+    return t[mask].mean()
 ###############################################
 # Handle signed to unsigned conversion
 def signed_to_unsigned(val, bits):
@@ -104,7 +281,7 @@ def get_signed_range(bits):
     return range(min_val, max_val + 1)
 ###############################################
 
-def quantize_element_mdlns(x, bit=8, sec_base=3, sec_base_bits=3):
+def quantize_element_mdlns(x, conv_lut, b_lut, t_lut, bit=8, sec_base=3, sec_base_bits=3, handle_zeros=1):
     # x = sx 2^bx 3^tx
     #2-D loop to get the representation with the lowest error
     #qx will have a concatenated representation {signx}{bx_min}{tx_min}
@@ -113,28 +290,45 @@ def quantize_element_mdlns(x, bit=8, sec_base=3, sec_base_bits=3):
     bin_base_bits = bit - sec_base_bits - 1
 
     signx = 1 if x >= 0 else -1
-    bx_range = get_signed_range(bin_base_bits)
-    tx_range = get_signed_range(sec_base_bits)  # For easiness, I called it tx as "trenary exponent of x". It is known that it does not have to be "trenary" per se, and that the second (non binary) exponent can be anything
+    #bx_range = get_signed_range(bin_base_bits)
+    #tx_range = get_signed_range(sec_base_bits)  # For easiness, I called it tx as "trenary exponent of x". It is known that it does not have to be "trenary" per se, and that the second (non binary) exponent can be anything
 
-    abs_error_min = float('inf')
-    bx_min = None
-    tx_min = None
-    nx = None
+    #c_lut = abs(conv_lut - x)
+    ###
+    c_lut = [abs(val - abs(x)) for val in conv_lut]
+
+    index = c_lut.index(min(c_lut))   # return the LUT index of the value that has the lowest abs difference with the input
+
+    bx_min = b_lut[index]
+    tx_min = t_lut[index]
+    
+    
+    nx = signx * conv_lut[index]
+
+    #Any positive of negative number whose reconstructed magnitude is the min representable by the exponent ranges will be forced to zero
+    if handle_zeros == 1:
+        if index == conv_lut.index(min(conv_lut)):
+            nx = 0
+
+    # abs_error_min = float('inf')
+    # bx_min = None
+    # tx_min = None
+    # nx = None
 
     #rep_values = [0] * (2**bin_base_bits) * (2**sec_base_bits)
     #i = 0
     # Brute-force search
-    for bx in bx_range:
-        for tx in tx_range:
-            candidate = signx * (2 ** bx) * (sec_base ** tx)
-            #rep_values[i] = abs(candidate)
-            #i = i + 1
-            abs_error = abs(x - candidate)
-            if abs_error < abs_error_min:
-                abs_error_min = abs_error
-                bx_min = bx
-                tx_min = tx
-                nx = candidate
+    # for bx in bx_range:
+    #     for tx in tx_range:
+    #         candidate = signx * (2 ** bx) * (sec_base ** tx)
+    #         #rep_values[i] = abs(candidate)
+    #         #i = i + 1
+    #         abs_error = abs(x - candidate)
+    #         if abs_error < abs_error_min:
+    #             abs_error_min = abs_error
+    #             bx_min = bx
+    #             tx_min = tx
+    #             nx = candidate
 
     #rep_values = sorted(rep_values)
 

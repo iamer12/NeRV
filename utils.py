@@ -13,7 +13,7 @@ from pytorch_msssim import ms_ssim, ssim
 # Adding some utility functions to evaluate various modes of quantization with the scalability feature
 ###############################################
 
-def quantize_per_tensor_mdlns(t, bit=8, sec_base=3, sec_base_bits=3, start=0.1, end=5.0, step=0.1, axis=-1):
+def quantize_per_tensor_mdlns(t, bit=8, sec_base=3, sec_base_bits=3, start=0.1, end=5.0, step=0.1, auto_scale=1, axis=-1):
     
     #if sec_base == -1:
         #sweep mode, which will loop across multiple potential second base values and select the one that gives the highest QSNR
@@ -50,11 +50,15 @@ def quantize_per_tensor_mdlns(t, bit=8, sec_base=3, sec_base_bits=3, start=0.1, 
                 b_lut[index] = bx
                 t_lut[index] = tx
                 index = index + 1
-        qt, nt = map_range(t, conv_lut, b_lut, t_lut, bit, sec_base_bits)
+        qt, nt = map_range(t, conv_lut, b_lut, t_lut, bit, sec_base_bits, auto_scale)
     else:
         candidate_sec_base = start
+        #candidate_sec_base = abs(t).min()
         max_qsnr = float('-inf')
+
+        #end = max(5.0, abs(t).max())
         while candidate_sec_base <= end:
+        #while candidate_sec_base <= abs(t).max():
             index = 0
             for bx in bx_range:
                 for tx in tx_range:
@@ -62,7 +66,7 @@ def quantize_per_tensor_mdlns(t, bit=8, sec_base=3, sec_base_bits=3, start=0.1, 
                     b_lut[index] = bx
                     t_lut[index] = tx
                     index = index + 1
-            c_qt, c_nt = map_range(t, conv_lut, b_lut, t_lut, bit, sec_base_bits)
+            c_qt, c_nt = map_range(t, conv_lut, b_lut, t_lut, bit, sec_base_bits, auto_scale)
 
             c_qsnr = calc_qsnr(t, c_nt)
             if c_qsnr > max_qsnr:
@@ -72,6 +76,9 @@ def quantize_per_tensor_mdlns(t, bit=8, sec_base=3, sec_base_bits=3, start=0.1, 
                 nt = c_nt
 
             candidate_sec_base = candidate_sec_base + step
+            #candidate_sec_base = candidate_sec_base + ((abs(t).max()-abs(t).min())/10.0)
+            #candidate_sec_base = candidate_sec_base + ((end-abs(t).min())/100.0)
+            #candidate_sec_base = candidate_sec_base + ((min(5.0, abs(t).max())-abs(t).min())/10.0)
 
         
     return sec_base_selected, qt, nt
@@ -97,7 +104,7 @@ def calc_qsnr(original: torch.Tensor, noisy: torch.Tensor) -> float:
     qsnr = 10 * torch.log10(signal_power / noise_power)
     return qsnr.item()
 ###############################################
-def map_range(t, conv_lut, b_lut, nb_lut, bit=8, sec_base_bits=3):
+def map_range(t, conv_lut, b_lut, nb_lut, bit=8, sec_base_bits=3, auto_scale=0):
     # t --> tensor, b --> binary, nb --> non-binary, conv --> integer to MDLNS conversion LUT
 
     conv_lut_signed = torch.tensor(conv_lut + [-x for x in conv_lut]) # conv_lut_signed  contains all the elements from conv_lut plus their negative counterparts
@@ -106,31 +113,49 @@ def map_range(t, conv_lut, b_lut, nb_lut, bit=8, sec_base_bits=3):
     b_lut_expanded = torch.tensor(b_lut + b_lut)
     nb_lut_expanded = torch.tensor(nb_lut + nb_lut)
 
-    t_min, t_max = t.min(), t.max()
-    lut_min, lut_max = conv_lut_signed.min(), conv_lut_signed.max()
+    if auto_scale == 1:
+        t_min, t_max = t.min(), t.max()
+        lut_min, lut_max = conv_lut_signed.min(), conv_lut_signed.max()
 
-    # Scale t to fit within the range of conv_lut_signed
-    t_scaled = (t - t_min) / (t_max - t_min)
-    t_scaled = t_scaled * (lut_max - lut_min) + lut_min
+        # Scale t to fit within the range of conv_lut_signed
+        t_scaled = (t - t_min) / (t_max - t_min)
+        t_scaled = t_scaled * (lut_max - lut_min) + lut_min
 
-    # Compute differences and get indices of closest LUT entries
-    diff = torch.abs(t_scaled.unsqueeze(-1) - conv_lut_signed)
-    indices = torch.argmin(diff, dim=-1)  # shape: (B, L)
+        # Compute differences and get indices of closest LUT entries
+        diff = torch.abs(t_scaled.unsqueeze(-1) - conv_lut_signed)
+        indices = torch.argmin(diff, dim=-1)  # shape: (B, L)
 
-    # Quantized values using those indices
-    t_dequantized = conv_lut_signed[indices]  # shape: (B, L)
-     
-    # Reconstruct t in the original range
-    # Reverse scaling: map from [lut_min, lut_max] back to [t_min, t_max]
-    t_reconstructed = (t_dequantized - lut_min) / (lut_max - lut_min)
-    t_reconstructed = t_reconstructed * (t_max - t_min) + t_min
-   
-    # Adding code
-    b_dequantized = b_lut_expanded[indices]
-    nb_dequantized = nb_lut_expanded[indices]
+        # Quantized values using those indices
+        t_dequantized = conv_lut_signed[indices]  # shape: (B, L)
+        
+        # Reconstruct t in the original range
+        # Reverse scaling: map from [lut_min, lut_max] back to [t_min, t_max]
+        t_reconstructed = (t_dequantized - lut_min) / (lut_max - lut_min)
+        t_reconstructed = t_reconstructed * (t_max - t_min) + t_min
+    
+        # Adding code
+        b_dequantized = b_lut_expanded[indices]
+        nb_dequantized = nb_lut_expanded[indices]
+
+        
+    else:
+        
+        #t_min, t_max = t.min(), t.max()
+        # Compute differences and get indices of closest LUT entries
+        diff = torch.abs(t.unsqueeze(-1) - conv_lut_signed)
+        indices = torch.argmin(diff, dim=-1)  # shape: (B, L)
+
+        # Quantized values using those indices - could have been one assignment straight to t_reconstructed
+        t_dequantized = conv_lut_signed[indices]  # shape: (B, L)
+        t_reconstructed = t_dequantized
+        
+        # Adding code
+        b_dequantized = b_lut_expanded[indices]
+        nb_dequantized = nb_lut_expanded[indices]
+        
+
 
     bin_base_bits = bit - sec_base_bits - 1
-
     qt = encode_qt_vector(t, b_dequantized, nb_dequantized, bin_base_bits, sec_base_bits)
     #notice that I am passing "t" as the first argument to use it to extract the signs later in the function
 

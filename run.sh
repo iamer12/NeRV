@@ -38,7 +38,9 @@ python train_nerv.py -e 100   --lower-width 96 --num-blocks 1 --dataset bunny --
     -b 1  --lr 0.0005 --norm none --suffix 107  --act swish \
     --weight checkpoints/nerv_S_pruned.pth --prune_ratio 0.4  --eval_only --quant_bit 4 --quant_axis 0 --num_frames 2 --num_prec_layers 2 --quant_bit_enh 4 4 4 \
     --qmode mdlns --mdlns_second_base 1000 --mdlns_second_base_exp_num_bits 2 2 2 2\
-    --mdlns_sweep_start 0.1 --mdlns_sweep_end 5.0 --mdlns_sweep_step 0.1
+    --mdlns_sweep_start 0.1 --mdlns_sweep_end 20.0 --mdlns_sweep_step 0.1 --mdlns_auto_scale 0
+    
+    
 
 #Evaluate quantized model command line from Git
 # python train_nerv.py -e 100   --lower-width 96 --num-blocks 1 --dataset bunny --frame_gap 1 \

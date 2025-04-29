@@ -368,10 +368,6 @@ def train(local_rank, args):
         val_psnr, val_msssim = evaluate(model, val_dataloader, PE, local_rank, args)
         ##############################################
 
-        # print_str = f'-------------------------------------'
-        # print(print_str)
-        # with open('{}/eval.txt'.format(args.outf), 'a') as f:
-        #     f.write(print_str + '\n')
 
         print_str += f'{args.qmode}|{args.num_frames} frames|{args.num_prec_layers} layers|{args.quant_bit}-{args.quant_bit_enh} - PSNR/ms_ssim on validate set for bit {args.quant_bit} with axis {args.quant_axis}: {round(val_psnr.item(),2)}/{round(val_msssim.item(),4)}'
         print(print_str)
@@ -680,10 +676,7 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
         # Number of channels = 3 (for RGB)
         _, _, height, width = inputs.shape
 
-        # Bits per channel based on dtype
-        # bits_per_channel = torch.finfo(dtype).bits if dtype.is_floating_point else torch.iinfo(dtype).bits
-        # Total bits per pixel (across all channels)
-        # bits_per_pixel = channels * bits_per_channel
+
 
         total_number_of_pixels_per_frame = height * width        
         total_number_of_pixels_per_video_sequence = args.num_frames * total_number_of_pixels_per_frame
@@ -721,49 +714,6 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
  
         bpp_bits_per_pixel_quant_entropy = total_bits/total_number_of_pixels_per_video_sequence
         compression_percentage_quant_entropy = 100*total_bits/total_number_of_bits_per_video_sequence
-
-        # print_str = f'==================================================================='
-        # print(print_str)
-        # if local_rank in [0, None]:
-        #     with open('{}/eval.txt'.format(args.outf), 'a') as f:
-        #         f.write(print_str + '\n')
-        
-        # print_str = f'{args.qmode}|{args.num_frames} frames|{args.num_prec_layers} layers|{args.quant_bit}-{args.quant_bit_enh} - These results are for a testing sample of {args.num_frames} frames'
-        # print(print_str)
-        # if local_rank in [0, None]:
-        #     with open('{}/eval.txt'.format(args.outf), 'a') as f:
-        #         f.write(print_str + '\n')
-        
-        # print_str = f'The quantization mode used is {args.qmode}'
-        # print(print_str)
-        # if local_rank in [0, None]:
-        #     with open('{}/eval.txt'.format(args.outf), 'a') as f:
-        #         f.write(print_str + '\n')
-
-        # print_str = f'{args.qmode}|{args.num_prec_layers} layers|{args.quant_bit}-{args.quant_bit_enh} - Total number of precision layers is {args.num_prec_layers}'
-        # print(print_str)
-        # if local_rank in [0, None]:
-        #     with open('{}/eval.txt'.format(args.outf), 'a') as f:
-        #         f.write(print_str + '\n')
-
-        # print_str = f'{args.qmode}|{args.num_prec_layers} layers|{args.quant_bit}-{args.quant_bit_enh} - Base layer is quantized into {args.quant_bit} bits'
-        # print(print_str)
-        # if local_rank in [0, None]:
-        #     with open('{}/eval.txt'.format(args.outf), 'a') as f:
-        #         f.write(print_str + '\n')
-
-        # print_str = f'{args.qmode}|{args.num_prec_layers} layers|{args.quant_bit}-{args.quant_bit_enh} - Quant bits for potential enhancement layers is defined as {args.quant_bit_enh}'
-        # print(print_str)
-        # if local_rank in [0, None]:
-        #     with open('{}/eval.txt'.format(args.outf), 'a') as f:
-        #         f.write(print_str + '\n')
-
-
-        # print_str = f'Using a pruning ratio of {100*args.prune_ratio}%:'
-        # print(print_str)
-        # if local_rank in [0, None]:
-        #     with open('{}/eval.txt'.format(args.outf), 'a') as f:
-        #         f.write(print_str + '\n')
 
 
         print_str = f'{args.qmode}|{args.num_frames} frames|{args.num_prec_layers} layers|{args.quant_bit}-{args.quant_bit_enh} - bpp after pruning and quantization: {bpp_bits_per_pixel_quant}'

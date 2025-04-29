@@ -31,15 +31,44 @@ echo "Running NeRV"
 #     --weight checkpoints/nerv_S_pruned.pth --prune_ratio 0.4  --eval_only --quant_bit 4 --quant_axis 0
 
 
+# You need more dynamic range as you head towards higher precision layers
 #Evaluate mdlns scalable quantization
+# python train_nerv.py -e 100   --lower-width 96 --num-blocks 1 --dataset bunny --frame_gap 1 \
+#     --outf dbg --embed 1.25_40 --stem_dim_num 512_1  --reduction 2  --fc_hw_dim 9_16_26 --expansion 1  \
+#     --single_res --loss Fusion6   --warmup 0. --lr_type cosine  --strides 5 2 2 2 2  --conv_type conv \
+#     -b 1  --lr 0.0005 --norm none --suffix 107  --act swish \
+#     --weight checkpoints/nerv_S_pruned.pth --prune_ratio 0.4  --eval_only --quant_bit 4 --quant_axis 0 --num_frames 2 --num_prec_layers 2 --quant_bit_enh 4 4 4 \
+#     --qmode mdlns --mdlns_second_base_exp_num_bits 2 2 2 2\
+#     --mdlns_sweep_start 0.5 --mdlns_sweep_end 10.0 --mdlns_sweep_step 0.5 --mdlns_auto_scale 0\
+#     --mdlns_first_base 2 --mdlns_second_base 1000
+
+    
+# lns
 python train_nerv.py -e 100   --lower-width 96 --num-blocks 1 --dataset bunny --frame_gap 1 \
     --outf dbg --embed 1.25_40 --stem_dim_num 512_1  --reduction 2  --fc_hw_dim 9_16_26 --expansion 1  \
     --single_res --loss Fusion6   --warmup 0. --lr_type cosine  --strides 5 2 2 2 2  --conv_type conv \
     -b 1  --lr 0.0005 --norm none --suffix 107  --act swish \
-    --weight checkpoints/nerv_S_pruned.pth --prune_ratio 0.4  --eval_only --quant_bit 4 --quant_axis 0 --num_frames 2 --num_prec_layers 2 --quant_bit_enh 4 4 4 \
-    --qmode mdlns --mdlns_second_base 1000 --mdlns_second_base_exp_num_bits 2 2 2 2\
-    --mdlns_sweep_start 0.1 --mdlns_sweep_end 20.0 --mdlns_sweep_step 0.1 --mdlns_auto_scale 0
-    
+    --weight checkpoints/nerv_S_pruned.pth --prune_ratio 0.4  --eval_only --quant_bit 6 --quant_axis 0 --num_frames 2 --num_prec_layers 2 --quant_bit_enh 6 6 6 \
+    --qmode lns --mdlns_second_base_exp_num_bits 2 2 2 2\
+    --mdlns_sweep_start 0.5 --mdlns_sweep_end 10.0 --mdlns_sweep_step 0.5 --mdlns_auto_scale 0\
+    --mdlns_first_base 2 --mdlns_second_base 1000\
+    --lns_base 2 --lns_exp_num_bits 4 4 4 4
+    # For 2 precision layers, you need at least 4 bits for exponent
+    # For 3 precision layers, you need at least 5 bits for exponent
+    # You need more dynamic range as you head towards higher precision layers
+
+
+
+
+# python train_nerv.py -e 100   --lower-width 96 --num-blocks 1 --dataset bunny --frame_gap 1 \
+#     --outf dbg --embed 1.25_40 --stem_dim_num 512_1  --reduction 2  --fc_hw_dim 9_16_26 --expansion 1  \
+#     --single_res --loss Fusion6   --warmup 0. --lr_type cosine  --strides 5 2 2 2 2  --conv_type conv \
+#     -b 1  --lr 0.0005 --norm none --suffix 107  --act swish \
+#     --weight checkpoints/nerv_S_pruned.pth --prune_ratio 0.4  --eval_only --quant_bit 20 --quant_axis 0 --num_frames 2 --num_prec_layers 2 --quant_bit_enh 20 20 20 \
+#     --qmode lns --mdlns_second_base_exp_num_bits 2 2 2 2\
+#     --mdlns_sweep_start 0.5 --mdlns_sweep_end 10.0 --mdlns_sweep_step 0.5 --mdlns_auto_scale 0\
+#     --mdlns_first_base 2 --mdlns_second_base 1000\
+#     --lns_base 2 --lns_exp_num_bits 3 3 3 3
     
 
 #Evaluate quantized model command line from Git

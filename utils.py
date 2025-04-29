@@ -13,12 +13,7 @@ from pytorch_msssim import ms_ssim, ssim
 # Adding some utility functions to evaluate various modes of quantization with the scalability feature
 ###############################################
 
-def quantize_per_tensor_mdlns(t, bit=8, sec_base=3, sec_base_bits=3, start=0.1, end=5.0, step=0.1, auto_scale=1, axis=-1):
-    
-    #if sec_base == -1:
-        #sweep mode, which will loop across multiple potential second base values and select the one that gives the highest QSNR
-        #note that in this case, this method will need to calculate a QSNR value for the reconstructed tensor versus passed one
-        #for now this code is commented as we are not yet testing the sweep 
+def quantize_per_tensor_mdlns(t, bit=8, first_base=2, sec_base=3, sec_base_bits=3, start=0.1, end=5.0, step=0.1, auto_scale=1, axis=-1):
 
     #t_valid = t!=0
     #t_min, t_max =  t[t_valid].min(), t[t_valid].max()
@@ -41,28 +36,25 @@ def quantize_per_tensor_mdlns(t, bit=8, sec_base=3, sec_base_bits=3, start=0.1, 
     b_lut = [0] * size_of_lut       # arrary for the binary (first) exponent
     t_lut = [0] * size_of_lut       # array for the trenary (second) exponent
     
+    first_base_selected = first_base
     sec_base_selected = sec_base
-    if sec_base != 1000:
+    if first_base != 1000 and sec_base != 1000: # both first and second bases are given
         index = 0
         for bx in bx_range:
             for tx in tx_range:
-                conv_lut[index] = (2 ** bx) * (sec_base_selected ** tx)
+                conv_lut[index] = (first_base_selected ** bx) * (sec_base_selected ** tx)
                 b_lut[index] = bx
                 t_lut[index] = tx
                 index = index + 1
         qt, nt = map_range(t, conv_lut, b_lut, t_lut, bit, sec_base_bits, auto_scale)
-    else:
+    elif first_base != 1000 and sec_base == 1000:   #first base is given. sweep second base only.
         candidate_sec_base = start
-        #candidate_sec_base = abs(t).min()
         max_qsnr = float('-inf')
-
-        #end = max(5.0, abs(t).max())
         while candidate_sec_base <= end:
-        #while candidate_sec_base <= abs(t).max():
             index = 0
             for bx in bx_range:
                 for tx in tx_range:
-                    conv_lut[index] = (2 ** bx) * (candidate_sec_base ** tx)
+                    conv_lut[index] = (first_base_selected ** bx) * (candidate_sec_base ** tx)
                     b_lut[index] = bx
                     t_lut[index] = tx
                     index = index + 1
@@ -76,12 +68,56 @@ def quantize_per_tensor_mdlns(t, bit=8, sec_base=3, sec_base_bits=3, start=0.1, 
                 nt = c_nt
 
             candidate_sec_base = candidate_sec_base + step
-            #candidate_sec_base = candidate_sec_base + ((abs(t).max()-abs(t).min())/10.0)
-            #candidate_sec_base = candidate_sec_base + ((end-abs(t).min())/100.0)
-            #candidate_sec_base = candidate_sec_base + ((min(5.0, abs(t).max())-abs(t).min())/10.0)
+    elif first_base == 1000 and sec_base != 1000:   #second base is given. sweep first base only.
+        candidate_first_base = start
+        max_qsnr = float('-inf')
+        while candidate_first_base <= end:
+            index = 0
+            for bx in bx_range:
+                for tx in tx_range:
+                    conv_lut[index] = (candidate_first_base ** bx) * (sec_base_selected ** tx)
+                    b_lut[index] = bx
+                    t_lut[index] = tx
+                    index = index + 1
+            c_qt, c_nt = map_range(t, conv_lut, b_lut, t_lut, bit, sec_base_bits, auto_scale)
+
+            c_qsnr = calc_qsnr(t, c_nt)
+            if c_qsnr > max_qsnr:
+                max_qsnr = c_qsnr
+                first_base_selected = candidate_first_base
+                qt = c_qt
+                nt = c_nt
+
+            candidate_first_base = candidate_first_base + step
+    else:   # both bases to be sweeped
+        max_qsnr = float('-inf')
+        candidate_first_base = start
+        while candidate_first_base <= end:
+            candidate_sec_base = start
+            while candidate_sec_base <= end:
+                index = 0
+                for bx in bx_range:
+                    for tx in tx_range:
+                        conv_lut[index] = (candidate_first_base ** bx) * (candidate_sec_base ** tx)
+                        b_lut[index] = bx
+                        t_lut[index] = tx
+                        index = index + 1
+                c_qt, c_nt = map_range(t, conv_lut, b_lut, t_lut, bit, sec_base_bits, auto_scale)
+
+                c_qsnr = calc_qsnr(t, c_nt)
+                if c_qsnr > max_qsnr:
+                    max_qsnr = c_qsnr
+                    first_base_selected = candidate_first_base
+                    sec_base_selected = candidate_sec_base
+                    qt = c_qt
+                    nt = c_nt
+
+                candidate_sec_base = candidate_sec_base + step
+            candidate_first_base = candidate_first_base + step
+            
 
         
-    return sec_base_selected, qt, nt
+    return first_base_selected, sec_base_selected, qt, nt
 ###############################################
 def calc_qsnr(original: torch.Tensor, noisy: torch.Tensor) -> float:
     
@@ -140,7 +176,6 @@ def map_range(t, conv_lut, b_lut, nb_lut, bit=8, sec_base_bits=3, auto_scale=0):
         
     else:
         
-        #t_min, t_max = t.min(), t.max()
         # Compute differences and get indices of closest LUT entries
         diff = torch.abs(t.unsqueeze(-1) - conv_lut_signed)
         indices = torch.argmin(diff, dim=-1)  # shape: (B, L)
@@ -273,6 +308,138 @@ def all_reduce(tensors, average=True):
         for tensor in tensors:
             tensor.mul_(1.0 / world_size)
     return tensors
+
+
+
+################################################################
+
+def quantize_per_tensor_lns(tensor, bit=8, lns_base=2, exp_bits=3):
+    """
+    Quantizes a 2D floating point tensor to LNS format (PyTorch version).
+
+    Args:
+        tensor (torch.Tensor): 2D tensor (float32 or float64).
+        bit (int): Total number of bits for LNS representation.
+        lns_base (float): Base for LNS. If 1000, search for best base.
+        exp_bits (int): Number of bits for exponent.
+
+    Returns:
+        base_selected (float): The selected base.
+        mantissa_tensor (torch.Tensor): Tensor of mantissas.
+        codewords (torch.Tensor): Tensor of quantized codewords.
+        dequantized (torch.Tensor): Dequantized tensor.
+    """
+    # assert tensor.dim() == 2, "Input tensor must be 2D"
+
+    device = tensor.device
+    dtype = tensor.dtype
+    mantissa_bits = bit - exp_bits - 1  # 1 bit for sign
+
+    # Flatten tensor for easier processing
+    tensor_flat = tensor.flatten()
+    sign = (tensor_flat < 0).to(torch.int32)
+    tensor_abs = torch.abs(tensor_flat) + 1e-12  # avoid log(0)
+
+
+
+    # Function to encode LNS
+    # def lns_encode(tensor_abs, base):
+    #     base = torch.tensor(base, device=device, dtype=dtype)
+    #     log_val = torch.log(tensor_abs) / torch.log(base)
+    #     int_log_val = torch.floor(log_val)
+    #     frac_log_val = log_val - int_log_val
+
+    #     # Quantize exponent
+    #     max_exp = 2 ** exp_bits - 1
+    #     exp = torch.clamp(int_log_val, 0, max_exp).to(torch.int32)
+
+    #     # Quantize mantissa
+    #     max_mantissa = 2 ** mantissa_bits - 1
+    #     mantissa = torch.clamp((frac_log_val * (max_mantissa + 1)).round(), 0, max_mantissa).to(torch.int32)
+
+    #     return exp, mantissa
+
+    # # Function to decode LNS
+    # def lns_decode(sign, exp, mantissa, base):
+    #     base = torch.tensor(base, device=device, dtype=dtype)
+    #     max_mantissa = 2 ** mantissa_bits - 1
+    #     #frac = mantissa.to(dtype) / (max_mantissa + 1)
+    #     frac = mantissa.to(dtype) / max_mantissa
+    #     value = base ** (exp.to(dtype) + frac)
+    #     value = torch.where(sign == 1, -value, value)
+    #     return value
+
+    
+
+    def lns_encode(tensor_abs, base):
+        base = torch.tensor(base, device=device, dtype=dtype)
+        log_val = torch.log(tensor_abs) / torch.log(base)
+        offset = 2 ** (exp_bits - 1)
+        int_log_val = torch.floor(log_val) + offset
+
+        max_exp = 2 ** exp_bits - 1
+        exp = torch.clamp(int_log_val, 0, max_exp).to(torch.int32)
+
+        frac_log_val = log_val - (torch.floor(log_val))
+        max_mantissa = 2 ** mantissa_bits - 1
+        mantissa = torch.clamp((frac_log_val * max_mantissa).round(), 0, max_mantissa).to(torch.int32)
+
+        return exp, mantissa
+
+    def lns_decode(sign, exp, mantissa, base):
+        base = torch.tensor(base, device=device, dtype=dtype)
+        max_mantissa = 2 ** mantissa_bits - 1
+        frac = mantissa.to(dtype) / max_mantissa
+        offset = 2 ** (exp_bits - 1)
+        real_exp = exp.to(dtype) - offset
+        value = base ** (real_exp + frac)
+        value = torch.where(sign == 1, -value, value)
+        return value
+
+
+
+    # QSNR calculation
+    # def calculate_qsnr(original, reconstructed):
+    #     signal_power = torch.mean(original ** 2)
+    #     noise_power = torch.mean((original - reconstructed) ** 2)
+    #     qsnr = 10 * torch.log10(signal_power / (noise_power + 1e-12))
+    #     return qsnr
+
+    # Search for best base if needed
+    if lns_base == 1000:
+        best_qsnr = -float('inf')
+        base_selected = None
+        best_reconstructed = None
+        best_exp, best_mantissa = None, None
+
+        for candidate_base in torch.linspace(1.1, 5.0, steps=100, device=device):
+            exp, mantissa = lns_encode(tensor_abs, candidate_base.item())
+            reconstructed = lns_decode(sign, exp, mantissa, candidate_base.item())
+            qsnr = calc_qsnr(tensor_flat, reconstructed)
+            if qsnr > best_qsnr:
+                best_qsnr = qsnr
+                base_selected = candidate_base.item()
+                best_reconstructed = reconstructed
+                best_exp, best_mantissa = exp, mantissa
+
+        exp = best_exp
+        mantissa = best_mantissa
+        dequantized_flat = best_reconstructed
+    else:
+        base_selected = lns_base
+        exp, mantissa = lns_encode(tensor_abs, base_selected)
+        dequantized_flat = lns_decode(sign, exp, mantissa, base_selected)
+
+    # Compose codewords: sign | exponent | mantissa
+    codewords = (sign << (bit - 1)) | (exp << mantissa_bits) | mantissa
+    codewords = codewords.view(tensor.shape)
+    mantissa_tensor = mantissa.view(tensor.shape)
+    dequantized = dequantized_flat.view(tensor.shape)
+
+    return base_selected, mantissa_tensor, codewords, dequantized
+
+
+################################################################
 
 
 class PositionalEncoding(nn.Module):
@@ -419,3 +586,6 @@ class PositionalEncodingTrans(nn.Module):
         index = torch.round(pos * self.max_len).long()
         p = self.pe[index]
         return p
+
+
+

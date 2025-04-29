@@ -114,8 +114,6 @@ def quantize_per_tensor_mdlns(t, bit=8, first_base=2, sec_base=3, sec_base_bits=
 
                 candidate_sec_base = candidate_sec_base + step
             candidate_first_base = candidate_first_base + step
-            
-
         
     return first_base_selected, sec_base_selected, qt, nt
 ###############################################
@@ -172,10 +170,8 @@ def map_range(t, conv_lut, b_lut, nb_lut, bit=8, sec_base_bits=3, auto_scale=0):
         # Adding code
         b_dequantized = b_lut_expanded[indices]
         nb_dequantized = nb_lut_expanded[indices]
-
-        
-    else:
-        
+    
+    else:        
         # Compute differences and get indices of closest LUT entries
         diff = torch.abs(t.unsqueeze(-1) - conv_lut_signed)
         indices = torch.argmin(diff, dim=-1)  # shape: (B, L)
@@ -188,7 +184,6 @@ def map_range(t, conv_lut, b_lut, nb_lut, bit=8, sec_base_bits=3, auto_scale=0):
         b_dequantized = b_lut_expanded[indices]
         nb_dequantized = nb_lut_expanded[indices]
         
-
 
     bin_base_bits = bit - sec_base_bits - 1
     qt = encode_qt_vector(t, b_dequantized, nb_dequantized, bin_base_bits, sec_base_bits)
@@ -317,21 +312,6 @@ def all_reduce(tensors, average=True):
 #def quantize_to_lns(tensor, bit, lns_base, exp_bits):
 def quantize_per_tensor_lns(tensor, lns_base=2, exp_bits=3):
     
-    # Quantizes a 1D or 2D floating point tensor to LNS representation (PyTorch version).
-
-    # Args:
-    #     tensor (torch.Tensor): Input 1D or 2D float32 tensor.
-    #     bit (int): Total number of bits (including sign bit).
-    #     lns_base (float): Base for logarithm. If 1000, the best base is searched.
-    #     exp_bits (int): Number of bits for exponent part.
-
-    # Returns:
-    #     base_selected (float): Selected LNS base.
-    #     codewords (torch.Tensor): Quantized tensor (codewords with sign and exponent bits).
-    #     tensor_dequant (torch.Tensor): Dequantized tensor.
-    
-    #assert tensor.ndim in [1,2], "Tensor must be 1D or 2D"
-    
     tensor = tensor.float()
     sign_bit = (tensor < 0).to(torch.uint8)
     tensor_abs = tensor.abs()
@@ -384,80 +364,7 @@ def quantize_per_tensor_lns(tensor, lns_base=2, exp_bits=3):
 
     return base_selected, codewords, tensor_dequant
 
-
-
 ################################################################
-
-# def quantize_per_tensor_minifloat(tensor, bit=8, exp_bits=4):
-#     assert bit > exp_bits + 1, "Total bit width must be greater than exponent bits + 1 for sign."
-    
-#     mantissa_bits = bit - exp_bits - 1
-#     exp_bias = 2**(exp_bits - 1) - 1  # Bias for exponent
-
-#     codewords = []
-#     dequantized = []
-
-#     for val in tensor.view(-1):
-        
-#         val = val.item()  # Convert PyTorch scalar tensor to native Python float
-        
-#         # Handle special case zero
-#         if val == 0.0:
-#             code = '0' + '0' * exp_bits + '0' * mantissa_bits
-#             codewords.append(code)
-#             dequantized.append(0.0)
-#             continue
-
-#         sign_bit = '0' if val >= 0 else '1'
-#         val = abs(val)
-
-#         # Decompose float into binary exponent and mantissa
-#         #exp = int(np.floor(np.log2(val)))
-#         #exp = int(np.floor(np.log2(val.item())))
-#         exp = int(np.floor(np.log2(val)))
-#         mant = val / (2 ** exp) - 1.0  # Normalized mantissa (between 0 and 1)
-
-#         exp_q = exp + exp_bias
-#         if exp_q <= 0:
-#             # Underflow to zero (no subnormals in this basic implementation)
-#             exp_bits_str = '0' * exp_bits
-#             mant_bits_str = '0' * mantissa_bits
-#             codewords.append(sign_bit + exp_bits_str + mant_bits_str)
-#             dequantized.append(0.0)
-#             continue
-#         elif exp_q >= 2**exp_bits - 1:
-#             # Overflow to max value (clamp exponent)
-#             exp_q = 2**exp_bits - 1
-#             mant_q = (1 - 2 ** -mantissa_bits)  # max mantissa
-#         else:
-#             #mant_q = round(mant * (2 ** mantissa_bits)) / (2 ** mantissa_bits)
-#             mant_q = round(float(mant * (2 ** mantissa_bits))) / (2 ** mantissa_bits)
-
-#         # Re-encode exponent and mantissa
-#         exp_bits_str = f'{exp_q:0{exp_bits}b}'
-#         mant_bits_int = int(mant_q * (2 ** mantissa_bits))
-#         mant_bits_str = f'{mant_bits_int:0{mantissa_bits}b}'
-
-#         code = sign_bit + exp_bits_str + mant_bits_str
-#         codewords.append(code)
-
-#         # Dequantization
-#         #quantized_val = ((-1)**int(sign_bit)) * (1 + mant_q) * (2 ** (exp_q - exp_bias))
-#         quantized_val = ((-1)**int(sign_bit)) * (1 + mant_q) * (2 ** (int(exp_q) - exp_bias))
-#         dequantized.append(quantized_val)
-
-    
-#     # Convert to object tensor using PyTorch-compatible way
-#     codewords_tensor = torch.tensor(np.array(codewords, dtype=object).reshape(tensor.shape), dtype=torch.object)
-#     return codewords_tensor, torch.tensor(dequantized).view(tensor.shape)
-
-
-    # codewords_array = np.array(codewords, dtype=object).reshape(tensor.shape)
-    # return codewords_array, torch.tensor(dequantized).view(tensor.shape)
-    
-    #return codewords, torch.tensor(dequantized).view(tensor.shape)
-    #return np.array(codewords), torch.tensor(dequantized).view(tensor.shape)
-
 
 def quantize_per_tensor_minifloat(tensor, bit=8, exp_bits=4):
     assert bit > exp_bits + 1, "Total bit width must be greater than exponent bits + 1 for sign."
@@ -510,8 +417,9 @@ def quantize_per_tensor_minifloat(tensor, bit=8, exp_bits=4):
     # Return a tensor of integer codewords and dequantized floating point values
     return torch.tensor(codewords, dtype=torch.int32).view(tensor.shape), torch.tensor(dequantized).view(tensor.shape)
 
-
-
+################################################################
+################################################################
+################################################################
 ################################################################
 
 

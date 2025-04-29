@@ -361,17 +361,32 @@ def train(local_rank, args):
                 sparisity_num += (param.weight == 0).sum()
             print_str += f'Model sparsity at Epoch{args.start_epoch}: {sparisity_num / 1e6 / total_params}\n'
 
+
         # import pdb; pdb.set_trace; from IPython import embed; embed()
         ##############################################
         # Calling optimizer and inference
         val_psnr, val_msssim = evaluate(model, val_dataloader, PE, local_rank, args)
         ##############################################
 
-        print_str += f'PSNR/ms_ssim on validate set for bit {args.quant_bit} with axis {args.quant_axis}: {round(val_psnr.item(),2)}/{round(val_msssim.item(),4)}'
+        # print_str = f'-------------------------------------'
+        # print(print_str)
+        # with open('{}/eval.txt'.format(args.outf), 'a') as f:
+        #     f.write(print_str + '\n')
+
+        print_str += f'{args.qmode}|{args.num_frames} frames|{args.num_prec_layers} layers|{args.quant_bit}-{args.quant_bit_enh} - PSNR/ms_ssim on validate set for bit {args.quant_bit} with axis {args.quant_axis}: {round(val_psnr.item(),2)}/{round(val_msssim.item(),4)}'
         print(print_str)
         with open('{}/eval.txt'.format(args.outf), 'a') as f:
-            f.write(print_str + '\n\n')        
+            f.write(print_str + '\n\n')
+
+        print_str = f'==================================================================='
+        print(print_str)
+        with open('{}/eval.txt'.format(args.outf), 'a') as f:
+            f.write(print_str + '\n')        
+        
         return
+    
+       
+        
 
     # Training
     start = datetime.now()
@@ -523,6 +538,13 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
         lns_base_selected = [0] * args.num_prec_layers     # If a sweep for lns base is activated, every precision layer will have its selected based stored in the corresponding element of this list
         ###########
         
+
+        print_str = f'==================================================================='
+        print(print_str)
+        if local_rank in [0, None]:
+            with open('{}/eval.txt'.format(args.outf), 'a') as f:
+                f.write(print_str + '\n')
+
         for k,v in cur_ckt.items():            
             large_tf = (v.dim() in {2,4} and 'bias' not in k)
             # snerv
@@ -573,65 +595,67 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
 
         ###########
         # Calculating and reporting sqnr. Every precision layer will have the sqnr that is associated to it
+
         layer_index = 1
         for layer_index in range(1, args.num_prec_layers+1): # for base layer and every enhancement layer
             ##
             sqnr[layer_index-1] = 10 * math.log10(v_sqr/v_ssd[layer_index-1]) # The assumption is that as more enhacement layers are included, sqnr becomes bigger/better
             ##
-            if layer_index == 1:
-                print_str = f'SQNR for base layer is: {sqnr[0]}'
-                print(print_str)
-                if local_rank in [0, None]:
-                    with open('{}/eval.txt'.format(args.outf), 'a') as f:
-                        f.write(print_str + '\n')
-            else:
-                print_str = f'SQNR after including {layer_index-1} enhancement layer(s) is: {sqnr[layer_index-1]}'
-                print(print_str)
-                if local_rank in [0, None]:
-                    with open('{}/eval.txt'.format(args.outf), 'a') as f:
-                        f.write(print_str + '\n')
-
             
             if layer_index == 1:
-                print_str = f'First MDLNS base selected for base layer is: {first_base_selected[0]}'
+                print_str = f'{args.qmode}|{args.num_frames} frames|{args.num_prec_layers} layers|{args.quant_bit}-{args.quant_bit_enh} - SQNR for base layer is: {sqnr[0]}'
                 print(print_str)
                 if local_rank in [0, None]:
                     with open('{}/eval.txt'.format(args.outf), 'a') as f:
                         f.write(print_str + '\n')
             else:
-                print_str = f'First MDLNS base selected for layer #{layer_index-1}: {first_base_selected[layer_index-1]}'
+                print_str = f'{args.qmode}|{args.num_frames} frames|{args.num_prec_layers} layers|{args.quant_bit}-{args.quant_bit_enh} - SQNR after including {layer_index-1} enhancement layer(s) is: {sqnr[layer_index-1]}'
                 print(print_str)
                 if local_rank in [0, None]:
                     with open('{}/eval.txt'.format(args.outf), 'a') as f:
                         f.write(print_str + '\n')
 
+            if args.qmode == 'mdlns':
+                if layer_index == 1:
+                    print_str = f'{args.qmode}|{args.num_frames} frames|{args.num_prec_layers} layers|{args.quant_bit}-{args.quant_bit_enh} - First MDLNS base selected for base layer is: {first_base_selected[0]}'
+                    print(print_str)
+                    if local_rank in [0, None]:
+                        with open('{}/eval.txt'.format(args.outf), 'a') as f:
+                            f.write(print_str + '\n')
+                else:
+                    print_str = f'{args.qmode}|{args.num_frames} frames|{args.num_prec_layers} layers|{args.quant_bit}-{args.quant_bit_enh} - First MDLNS base selected for layer #{layer_index-1}: {first_base_selected[layer_index-1]}'
+                    print(print_str)
+                    if local_rank in [0, None]:
+                        with open('{}/eval.txt'.format(args.outf), 'a') as f:
+                            f.write(print_str + '\n')
+            
+                if layer_index == 1:
+                    print_str = f'{args.qmode}|{args.num_frames} frames|{args.num_prec_layers} layers|{args.quant_bit}-{args.quant_bit_enh} - Second MDLNS base selected for base layer is: {sec_base_selected[0]}'
+                    print(print_str)
+                    if local_rank in [0, None]:
+                        with open('{}/eval.txt'.format(args.outf), 'a') as f:
+                            f.write(print_str + '\n')
+                else:
+                    print_str = f'{args.qmode}|{args.num_frames} frames|{args.num_prec_layers} layers|{args.quant_bit}-{args.quant_bit_enh} - Second base MDLNS selected for layer #{layer_index-1}: {sec_base_selected[layer_index-1]}'
+                    print(print_str)
+                    if local_rank in [0, None]:
+                        with open('{}/eval.txt'.format(args.outf), 'a') as f:
+                            f.write(print_str + '\n')
 
-            if layer_index == 1:
-                print_str = f'Second MDLNS base selected for base layer is: {sec_base_selected[0]}'
-                print(print_str)
-                if local_rank in [0, None]:
-                    with open('{}/eval.txt'.format(args.outf), 'a') as f:
-                        f.write(print_str + '\n')
-            else:
-                print_str = f'Second base MDLNS selected for layer #{layer_index-1}: {sec_base_selected[layer_index-1]}'
-                print(print_str)
-                if local_rank in [0, None]:
-                    with open('{}/eval.txt'.format(args.outf), 'a') as f:
-                        f.write(print_str + '\n')
 
-
-            if layer_index == 1:
-                print_str = f'LNS base selected for base layer is: {lns_base_selected[0]}'
-                print(print_str)
-                if local_rank in [0, None]:
-                    with open('{}/eval.txt'.format(args.outf), 'a') as f:
-                        f.write(print_str + '\n')
-            else:
-                print_str = f'LNS base selected for layer #{layer_index-1}: {lns_base_selected[layer_index-1]}'
-                print(print_str)
-                if local_rank in [0, None]:
-                    with open('{}/eval.txt'.format(args.outf), 'a') as f:
-                        f.write(print_str + '\n')
+            elif args.qmode == 'lns':
+                if layer_index == 1:
+                    print_str = f'{args.qmode}|{args.num_frames} frames|{args.num_prec_layers} layers|{args.quant_bit}-{args.quant_bit_enh} - LNS base selected for base layer is: {lns_base_selected[0]}'
+                    print(print_str)
+                    if local_rank in [0, None]:
+                        with open('{}/eval.txt'.format(args.outf), 'a') as f:
+                            f.write(print_str + '\n')
+                else:
+                    print_str = f'{args.qmode}|{args.num_frames} frames|{args.num_prec_layers} layers|{args.quant_bit}-{args.quant_bit_enh} - LNS base selected for layer #{layer_index-1}: {lns_base_selected[layer_index-1]}'
+                    print(print_str)
+                    if local_rank in [0, None]:
+                        with open('{}/eval.txt'.format(args.outf), 'a') as f:
+                            f.write(print_str + '\n')
         
         
         layer_index = layer_index + 1
@@ -698,41 +722,41 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
         bpp_bits_per_pixel_quant_entropy = total_bits/total_number_of_pixels_per_video_sequence
         compression_percentage_quant_entropy = 100*total_bits/total_number_of_bits_per_video_sequence
 
-        print_str = f'==================================================================='
-        print(print_str)
-        if local_rank in [0, None]:
-            with open('{}/eval.txt'.format(args.outf), 'a') as f:
-                f.write(print_str + '\n')
+        # print_str = f'==================================================================='
+        # print(print_str)
+        # if local_rank in [0, None]:
+        #     with open('{}/eval.txt'.format(args.outf), 'a') as f:
+        #         f.write(print_str + '\n')
         
-        print_str = f'These results are for a testing sample of {args.num_frames} frames'
-        print(print_str)
-        if local_rank in [0, None]:
-            with open('{}/eval.txt'.format(args.outf), 'a') as f:
-                f.write(print_str + '\n')
+        # print_str = f'{args.qmode}|{args.num_frames} frames|{args.num_prec_layers} layers|{args.quant_bit}-{args.quant_bit_enh} - These results are for a testing sample of {args.num_frames} frames'
+        # print(print_str)
+        # if local_rank in [0, None]:
+        #     with open('{}/eval.txt'.format(args.outf), 'a') as f:
+        #         f.write(print_str + '\n')
         
-        print_str = f'The quantization mode used is {args.qmode}'
-        print(print_str)
-        if local_rank in [0, None]:
-            with open('{}/eval.txt'.format(args.outf), 'a') as f:
-                f.write(print_str + '\n')
+        # print_str = f'The quantization mode used is {args.qmode}'
+        # print(print_str)
+        # if local_rank in [0, None]:
+        #     with open('{}/eval.txt'.format(args.outf), 'a') as f:
+        #         f.write(print_str + '\n')
 
-        print_str = f'Total number of precision layers is {args.num_prec_layers}'
-        print(print_str)
-        if local_rank in [0, None]:
-            with open('{}/eval.txt'.format(args.outf), 'a') as f:
-                f.write(print_str + '\n')
+        # print_str = f'{args.qmode}|{args.num_prec_layers} layers|{args.quant_bit}-{args.quant_bit_enh} - Total number of precision layers is {args.num_prec_layers}'
+        # print(print_str)
+        # if local_rank in [0, None]:
+        #     with open('{}/eval.txt'.format(args.outf), 'a') as f:
+        #         f.write(print_str + '\n')
 
-        print_str = f'Base layer is quantized into {args.quant_bit} bits'
-        print(print_str)
-        if local_rank in [0, None]:
-            with open('{}/eval.txt'.format(args.outf), 'a') as f:
-                f.write(print_str + '\n')
+        # print_str = f'{args.qmode}|{args.num_prec_layers} layers|{args.quant_bit}-{args.quant_bit_enh} - Base layer is quantized into {args.quant_bit} bits'
+        # print(print_str)
+        # if local_rank in [0, None]:
+        #     with open('{}/eval.txt'.format(args.outf), 'a') as f:
+        #         f.write(print_str + '\n')
 
-        print_str = f'Quant bits for potential enhancement layers is defined as {args.quant_bit_enh}'
-        print(print_str)
-        if local_rank in [0, None]:
-            with open('{}/eval.txt'.format(args.outf), 'a') as f:
-                f.write(print_str + '\n')
+        # print_str = f'{args.qmode}|{args.num_prec_layers} layers|{args.quant_bit}-{args.quant_bit_enh} - Quant bits for potential enhancement layers is defined as {args.quant_bit_enh}'
+        # print(print_str)
+        # if local_rank in [0, None]:
+        #     with open('{}/eval.txt'.format(args.outf), 'a') as f:
+        #         f.write(print_str + '\n')
 
 
         # print_str = f'Using a pruning ratio of {100*args.prune_ratio}%:'
@@ -741,48 +765,41 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
         #     with open('{}/eval.txt'.format(args.outf), 'a') as f:
         #         f.write(print_str + '\n')
 
-        
-        print_str = f'---------------------------------------------------'
+
+        print_str = f'{args.qmode}|{args.num_frames} frames|{args.num_prec_layers} layers|{args.quant_bit}-{args.quant_bit_enh} - bpp after pruning and quantization: {bpp_bits_per_pixel_quant}'
         print(print_str)
         if local_rank in [0, None]:
             with open('{}/eval.txt'.format(args.outf), 'a') as f:
                 f.write(print_str + '\n')
 
-
-        print_str = f'bpp after pruning and quantization: {bpp_bits_per_pixel_quant}'
-        print(print_str)
-        if local_rank in [0, None]:
-            with open('{}/eval.txt'.format(args.outf), 'a') as f:
-                f.write(print_str + '\n')
-
-        print_str = f'This is equivalent to a % compression ratio due to pruning followed by quantization: {compression_percentage_quant}%'
+        print_str = f'{args.qmode}|{args.num_frames} frames|{args.num_prec_layers} layers|{args.quant_bit}-{args.quant_bit_enh} - This is equivalent to a % compression ratio due to pruning followed by quantization: {compression_percentage_quant}%'
         print(print_str)
         if local_rank in [0, None]:
             with open('{}/eval.txt'.format(args.outf), 'a') as f:
                 f.write(print_str + '\n')
 
         
-        print_str = f'bpp after pruning and quantization, followed by entropy coding: {bpp_bits_per_pixel_quant_entropy}'
+        print_str = f'{args.qmode}|{args.num_frames} frames|{args.num_prec_layers} layers|{args.quant_bit}-{args.quant_bit_enh} - bpp after pruning and quantization, followed by entropy coding: {bpp_bits_per_pixel_quant_entropy}'
         print(print_str)
         if local_rank in [0, None]:
             with open('{}/eval.txt'.format(args.outf), 'a') as f:
                 f.write(print_str + '\n')
         
-        print_str = f'This is equivalent to a % compression ratio due to pruning, quantization, and entropy coding: {compression_percentage_quant_entropy}%'
+        print_str = f'{args.qmode}|{args.num_frames} frames|{args.num_prec_layers} layers|{args.quant_bit}-{args.quant_bit_enh} - This is equivalent to a % compression ratio due to pruning, quantization, and entropy coding: {compression_percentage_quant_entropy}%'
         print(print_str)
         if local_rank in [0, None]:
             with open('{}/eval.txt'.format(args.outf), 'a') as f:
                 f.write(print_str + '\n')
 
         
-        print_str = f'So, entropy coding provides an extra gain of: {compression_percentage_quant-compression_percentage_quant_entropy}%'
+        print_str = f'{args.qmode}|{args.num_frames} frames|{args.num_prec_layers} layers|{args.quant_bit}-{args.quant_bit_enh} - So, entropy coding provides an extra gain of: {compression_percentage_quant-compression_percentage_quant_entropy}%'
         print(print_str)
         if local_rank in [0, None]:
             with open('{}/eval.txt'.format(args.outf), 'a') as f:
                 f.write(print_str + '\n')
 
-
-        print_str = f'---------------------------------------------------'
+         
+        print_str = f'-------------------------------------'
         print(print_str)
         if local_rank in [0, None]:
             with open('{}/eval.txt'.format(args.outf), 'a') as f:

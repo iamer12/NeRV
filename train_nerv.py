@@ -517,7 +517,6 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
         sec_base_selected = [0] * args.num_prec_layers     # If a sweep for second base is activated, every precision layer will have its selected second based stored in the corresponding element of this list
 
         lns_base_selected = [0] * args.num_prec_layers     # If a sweep for lns base is activated, every precision layer will have its selected based stored in the corresponding element of this list
-        lns_mantissa_selected = [0] * args.num_prec_layers     # If a sweep for lns base is activated, every precision layer will have its selected based stored in the corresponding element of this list
         ###########
         
         for k,v in cur_ckt.items():            
@@ -538,7 +537,7 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
                     elif args.qmode == 'mdlns':
                         first_base_selected[layer_index-1], sec_base_selected[layer_index-1], quant_v, new_v = quantize_per_tensor_mdlns(v, args.quant_bit, args.mdlns_first_base, args.mdlns_second_base, args.mdlns_second_base_exp_num_bits[0], args.mdlns_sweep_start, args.mdlns_sweep_end, args.mdlns_sweep_step, args.mdlns_auto_scale, args.quant_axis if large_tf else -1) # pass highest quality/full precision tensor
                     elif args.qmode == 'lns':
-                        lns_base_selected[layer_index-1], lns_mantissa_selected[layer_index-1], quant_v, new_v = quantize_per_tensor_lns(v, args.quant_bit, args.lns_base, args.lns_exp_num_bits[0]) # pass highest quality/full precision tensor
+                        lns_base_selected[layer_index-1], quant_v, new_v = quantize_per_tensor_lns(v, args.lns_base, args.lns_exp_num_bits[0]) # pass highest quality/full precision tensor
 
                     cur_ckt[k] = new_v
             
@@ -548,7 +547,7 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
                     elif args.qmode == 'mdlns':
                         first_base_selected[layer_index-1], sec_base_selected[layer_index-1], quant_v, new_v = quantize_per_tensor_mdlns(v-cur_ckt[k], args.quant_bit_enh[layer_index-2], args.mdlns_first_base, args.mdlns_second_base, args.mdlns_second_base_exp_num_bits[layer_index-1], args.mdlns_sweep_start, args.mdlns_sweep_end, args.mdlns_sweep_step, args.mdlns_auto_scale, args.quant_axis if large_tf else -1) # pass delta between highest quality/full precision tensor, and the latest tensor uptil last enhancement layer
                     elif args.qmode == 'lns':
-                        lns_base_selected[layer_index-1], lns_mantissa_selected[layer_index-1], quant_v, new_v = quantize_per_tensor_lns(v-cur_ckt[k], args.quant_bit_enh[layer_index-2], args.lns_base, args.lns_exp_num_bits[layer_index-1]) # pass delta between highest quality/full precision tensor, and the latest tensor uptil last enhancement layer
+                        lns_base_selected[layer_index-1], quant_v, new_v = quantize_per_tensor_lns(v-cur_ckt[k], args.lns_base, args.lns_exp_num_bits[layer_index-1]) # pass delta between highest quality/full precision tensor, and the latest tensor uptil last enhancement layer
                     
                     
                     cur_ckt[k] = cur_ckt[k] + new_v # include/accumulate enhancement layer(s)
@@ -586,13 +585,13 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
 
             
             if layer_index == 1:
-                print_str = f'First base selected for base layer is: {first_base_selected[0]}'
+                print_str = f'First MDLNS base selected for base layer is: {first_base_selected[0]}'
                 print(print_str)
                 if local_rank in [0, None]:
                     with open('{}/eval.txt'.format(args.outf), 'a') as f:
                         f.write(print_str + '\n')
             else:
-                print_str = f'First base selected for layer #{layer_index-1}: {first_base_selected[layer_index-1]}'
+                print_str = f'First MDLNS base selected for layer #{layer_index-1}: {first_base_selected[layer_index-1]}'
                 print(print_str)
                 if local_rank in [0, None]:
                     with open('{}/eval.txt'.format(args.outf), 'a') as f:
@@ -600,13 +599,27 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
 
 
             if layer_index == 1:
-                print_str = f'Second base selected for base layer is: {sec_base_selected[0]}'
+                print_str = f'Second MDLNS base selected for base layer is: {sec_base_selected[0]}'
                 print(print_str)
                 if local_rank in [0, None]:
                     with open('{}/eval.txt'.format(args.outf), 'a') as f:
                         f.write(print_str + '\n')
             else:
-                print_str = f'Second base selected for layer #{layer_index-1}: {sec_base_selected[layer_index-1]}'
+                print_str = f'Second base MDLNS selected for layer #{layer_index-1}: {sec_base_selected[layer_index-1]}'
+                print(print_str)
+                if local_rank in [0, None]:
+                    with open('{}/eval.txt'.format(args.outf), 'a') as f:
+                        f.write(print_str + '\n')
+
+
+            if layer_index == 1:
+                print_str = f'LNS base selected for base layer is: {lns_base_selected[0]}'
+                print(print_str)
+                if local_rank in [0, None]:
+                    with open('{}/eval.txt'.format(args.outf), 'a') as f:
+                        f.write(print_str + '\n')
+            else:
+                print_str = f'LNS base selected for layer #{layer_index-1}: {lns_base_selected[layer_index-1]}'
                 print(print_str)
                 if local_rank in [0, None]:
                     with open('{}/eval.txt'.format(args.outf), 'a') as f:

@@ -68,6 +68,10 @@ def main():
     parser.add_argument('--lns_exp_num_bits', type=int, nargs='+', default=[3, 3, 3, 3], help='for every precision layer, number of bits allocated for the quantized exponent of the LNS base')
 
 
+    # minifloat
+    parser.add_argument('--minifloat_exp_num_bits', type=int, nargs='+', default=[3, 3, 3, 3], help='for every precision layer, number of bits allocated for the minifloat exponent')
+
+
 
     # embedding parameters
     parser.add_argument('--embed', type=str, default='1.25_80', help='base value/embed length for position encoding')
@@ -538,6 +542,8 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
                         first_base_selected[layer_index-1], sec_base_selected[layer_index-1], quant_v, new_v = quantize_per_tensor_mdlns(v, args.quant_bit, args.mdlns_first_base, args.mdlns_second_base, args.mdlns_second_base_exp_num_bits[0], args.mdlns_sweep_start, args.mdlns_sweep_end, args.mdlns_sweep_step, args.mdlns_auto_scale, args.quant_axis if large_tf else -1) # pass highest quality/full precision tensor
                     elif args.qmode == 'lns':
                         lns_base_selected[layer_index-1], quant_v, new_v = quantize_per_tensor_lns(v, args.lns_base, args.lns_exp_num_bits[0]) # pass highest quality/full precision tensor
+                    elif args.qmode == 'minifloat':
+                        quant_v, new_v = quantize_per_tensor_minifloat(v, args.quant_bit, args.minifloat_exp_num_bits[0]) # pass highest quality/full precision tensor
 
                     cur_ckt[k] = new_v
             
@@ -548,6 +554,8 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
                         first_base_selected[layer_index-1], sec_base_selected[layer_index-1], quant_v, new_v = quantize_per_tensor_mdlns(v-cur_ckt[k], args.quant_bit_enh[layer_index-2], args.mdlns_first_base, args.mdlns_second_base, args.mdlns_second_base_exp_num_bits[layer_index-1], args.mdlns_sweep_start, args.mdlns_sweep_end, args.mdlns_sweep_step, args.mdlns_auto_scale, args.quant_axis if large_tf else -1) # pass delta between highest quality/full precision tensor, and the latest tensor uptil last enhancement layer
                     elif args.qmode == 'lns':
                         lns_base_selected[layer_index-1], quant_v, new_v = quantize_per_tensor_lns(v-cur_ckt[k], args.lns_base, args.lns_exp_num_bits[layer_index-1]) # pass delta between highest quality/full precision tensor, and the latest tensor uptil last enhancement layer
+                    elif args.qmode == 'minifloat':
+                        quant_v, new_v = quantize_per_tensor_minifloat(v-cur_ckt[k], args.quant_bit, args.minifloat_exp_num_bits[layer_index-1]) # pass highest quality/full precision tensor
                     
                     
                     cur_ckt[k] = cur_ckt[k] + new_v # include/accumulate enhancement layer(s)

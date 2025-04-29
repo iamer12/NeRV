@@ -388,130 +388,128 @@ def quantize_per_tensor_lns(tensor, lns_base=2, exp_bits=3):
 
 ################################################################
 
-# def quantize_per_tensor_lns(tensor, bit=8, lns_base=2, exp_bits=3):
-#     """
-#     Quantizes a 2D floating point tensor to LNS format (PyTorch version).
+# def quantize_per_tensor_minifloat(tensor, bit=8, exp_bits=4):
+#     assert bit > exp_bits + 1, "Total bit width must be greater than exponent bits + 1 for sign."
+    
+#     mantissa_bits = bit - exp_bits - 1
+#     exp_bias = 2**(exp_bits - 1) - 1  # Bias for exponent
 
-#     Args:
-#         tensor (torch.Tensor): 2D tensor (float32 or float64).
-#         bit (int): Total number of bits for LNS representation.
-#         lns_base (float): Base for LNS. If 1000, search for best base.
-#         exp_bits (int): Number of bits for exponent.
+#     codewords = []
+#     dequantized = []
 
-#     Returns:
-#         base_selected (float): The selected base.
-#         mantissa_tensor (torch.Tensor): Tensor of mantissas.
-#         codewords (torch.Tensor): Tensor of quantized codewords.
-#         dequantized (torch.Tensor): Dequantized tensor.
-#     """
-#     # assert tensor.dim() == 2, "Input tensor must be 2D"
+#     for val in tensor.view(-1):
+        
+#         val = val.item()  # Convert PyTorch scalar tensor to native Python float
+        
+#         # Handle special case zero
+#         if val == 0.0:
+#             code = '0' + '0' * exp_bits + '0' * mantissa_bits
+#             codewords.append(code)
+#             dequantized.append(0.0)
+#             continue
 
-#     device = tensor.device
-#     dtype = tensor.dtype
-#     mantissa_bits = bit - exp_bits - 1  # 1 bit for sign
+#         sign_bit = '0' if val >= 0 else '1'
+#         val = abs(val)
 
-#     # Flatten tensor for easier processing
-#     tensor_flat = tensor.flatten()
-#     sign = (tensor_flat < 0).to(torch.int32)
-#     tensor_abs = torch.abs(tensor_flat) + 1e-12  # avoid log(0)
+#         # Decompose float into binary exponent and mantissa
+#         #exp = int(np.floor(np.log2(val)))
+#         #exp = int(np.floor(np.log2(val.item())))
+#         exp = int(np.floor(np.log2(val)))
+#         mant = val / (2 ** exp) - 1.0  # Normalized mantissa (between 0 and 1)
 
+#         exp_q = exp + exp_bias
+#         if exp_q <= 0:
+#             # Underflow to zero (no subnormals in this basic implementation)
+#             exp_bits_str = '0' * exp_bits
+#             mant_bits_str = '0' * mantissa_bits
+#             codewords.append(sign_bit + exp_bits_str + mant_bits_str)
+#             dequantized.append(0.0)
+#             continue
+#         elif exp_q >= 2**exp_bits - 1:
+#             # Overflow to max value (clamp exponent)
+#             exp_q = 2**exp_bits - 1
+#             mant_q = (1 - 2 ** -mantissa_bits)  # max mantissa
+#         else:
+#             #mant_q = round(mant * (2 ** mantissa_bits)) / (2 ** mantissa_bits)
+#             mant_q = round(float(mant * (2 ** mantissa_bits))) / (2 ** mantissa_bits)
 
+#         # Re-encode exponent and mantissa
+#         exp_bits_str = f'{exp_q:0{exp_bits}b}'
+#         mant_bits_int = int(mant_q * (2 ** mantissa_bits))
+#         mant_bits_str = f'{mant_bits_int:0{mantissa_bits}b}'
 
-#     # Function to encode LNS
-#     # def lns_encode(tensor_abs, base):
-#     #     base = torch.tensor(base, device=device, dtype=dtype)
-#     #     log_val = torch.log(tensor_abs) / torch.log(base)
-#     #     int_log_val = torch.floor(log_val)
-#     #     frac_log_val = log_val - int_log_val
+#         code = sign_bit + exp_bits_str + mant_bits_str
+#         codewords.append(code)
 
-#     #     # Quantize exponent
-#     #     max_exp = 2 ** exp_bits - 1
-#     #     exp = torch.clamp(int_log_val, 0, max_exp).to(torch.int32)
-
-#     #     # Quantize mantissa
-#     #     max_mantissa = 2 ** mantissa_bits - 1
-#     #     mantissa = torch.clamp((frac_log_val * (max_mantissa + 1)).round(), 0, max_mantissa).to(torch.int32)
-
-#     #     return exp, mantissa
-
-#     # # Function to decode LNS
-#     # def lns_decode(sign, exp, mantissa, base):
-#     #     base = torch.tensor(base, device=device, dtype=dtype)
-#     #     max_mantissa = 2 ** mantissa_bits - 1
-#     #     #frac = mantissa.to(dtype) / (max_mantissa + 1)
-#     #     frac = mantissa.to(dtype) / max_mantissa
-#     #     value = base ** (exp.to(dtype) + frac)
-#     #     value = torch.where(sign == 1, -value, value)
-#     #     return value
+#         # Dequantization
+#         #quantized_val = ((-1)**int(sign_bit)) * (1 + mant_q) * (2 ** (exp_q - exp_bias))
+#         quantized_val = ((-1)**int(sign_bit)) * (1 + mant_q) * (2 ** (int(exp_q) - exp_bias))
+#         dequantized.append(quantized_val)
 
     
-
-#     def lns_encode(tensor_abs, base):
-#         base = torch.tensor(base, device=device, dtype=dtype)
-#         log_val = torch.log(tensor_abs) / torch.log(base)
-#         offset = 2 ** (exp_bits - 1)
-#         int_log_val = torch.floor(log_val) + offset
-
-#         max_exp = 2 ** exp_bits - 1
-#         exp = torch.clamp(int_log_val, 0, max_exp).to(torch.int32)
-
-#         frac_log_val = log_val - (torch.floor(log_val))
-#         max_mantissa = 2 ** mantissa_bits - 1
-#         mantissa = torch.clamp((frac_log_val * max_mantissa).round(), 0, max_mantissa).to(torch.int32)
-
-#         return exp, mantissa
-
-#     def lns_decode(sign, exp, mantissa, base):
-#         base = torch.tensor(base, device=device, dtype=dtype)
-#         max_mantissa = 2 ** mantissa_bits - 1
-#         frac = mantissa.to(dtype) / max_mantissa
-#         offset = 2 ** (exp_bits - 1)
-#         real_exp = exp.to(dtype) - offset
-#         value = base ** (real_exp + frac)
-#         value = torch.where(sign == 1, -value, value)
-#         return value
+#     # Convert to object tensor using PyTorch-compatible way
+#     codewords_tensor = torch.tensor(np.array(codewords, dtype=object).reshape(tensor.shape), dtype=torch.object)
+#     return codewords_tensor, torch.tensor(dequantized).view(tensor.shape)
 
 
+    # codewords_array = np.array(codewords, dtype=object).reshape(tensor.shape)
+    # return codewords_array, torch.tensor(dequantized).view(tensor.shape)
+    
+    #return codewords, torch.tensor(dequantized).view(tensor.shape)
+    #return np.array(codewords), torch.tensor(dequantized).view(tensor.shape)
 
-#     # QSNR calculation
-#     # def calculate_qsnr(original, reconstructed):
-#     #     signal_power = torch.mean(original ** 2)
-#     #     noise_power = torch.mean((original - reconstructed) ** 2)
-#     #     qsnr = 10 * torch.log10(signal_power / (noise_power + 1e-12))
-#     #     return qsnr
 
-#     # Search for best base if needed
-#     if lns_base == 1000:
-#         best_qsnr = -float('inf')
-#         base_selected = None
-#         best_reconstructed = None
-#         best_exp, best_mantissa = None, None
+def quantize_per_tensor_minifloat(tensor, bit=8, exp_bits=4):
+    assert bit > exp_bits + 1, "Total bit width must be greater than exponent bits + 1 for sign."
 
-#         for candidate_base in torch.linspace(1.1, 5.0, steps=100, device=device):
-#             exp, mantissa = lns_encode(tensor_abs, candidate_base.item())
-#             reconstructed = lns_decode(sign, exp, mantissa, candidate_base.item())
-#             qsnr = calc_qsnr(tensor_flat, reconstructed)
-#             if qsnr > best_qsnr:
-#                 best_qsnr = qsnr
-#                 base_selected = candidate_base.item()
-#                 best_reconstructed = reconstructed
-#                 best_exp, best_mantissa = exp, mantissa
+    mantissa_bits = bit - exp_bits - 1
+    exp_bias = 2**(exp_bits - 1) - 1  # Bias for exponent
 
-#         exp = best_exp
-#         mantissa = best_mantissa
-#         dequantized_flat = best_reconstructed
-#     else:
-#         base_selected = lns_base
-#         exp, mantissa = lns_encode(tensor_abs, base_selected)
-#         dequantized_flat = lns_decode(sign, exp, mantissa, base_selected)
+    codewords = []
+    dequantized = []
 
-#     # Compose codewords: sign | exponent | mantissa
-#     codewords = (sign << (bit - 1)) | (exp << mantissa_bits) | mantissa
-#     codewords = codewords.view(tensor.shape)
-#     mantissa_tensor = mantissa.view(tensor.shape)
-#     dequantized = dequantized_flat.view(tensor.shape)
+    # Loop through each element in the tensor
+    for val in tensor.view(-1):
+        val = val.item()  # Convert tensor element to Python float
 
-#     return base_selected, mantissa_tensor, codewords, dequantized
+        # Handle special case zero
+        if val == 0.0:
+            codewords.append(0)  # 0 bitfield for zero
+            dequantized.append(0.0)
+            continue
+
+        sign_bit = 0 if val >= 0 else 1
+        val = abs(val)
+
+        exp = int(torch.floor(torch.log2(torch.tensor(val))))  # Use PyTorch log2 function
+        mant = val / (2 ** exp) - 1.0  # Normalized mantissa (between 0 and 1)
+
+        exp_q = exp + exp_bias
+        if exp_q <= 0:
+            # Underflow to zero (no subnormals in this basic implementation)
+            codewords.append(0)  # 0 bitfield for underflow
+            dequantized.append(0.0)
+            continue
+        elif exp_q >= 2**exp_bits - 1:
+            # Overflow to max representable value
+            exp_q = 2**exp_bits - 1
+            mant_q = (1 - 2 ** -mantissa_bits)
+        else:
+            mant_q = round(float(mant * (2 ** mantissa_bits))) / (2 ** mantissa_bits)
+
+        # Pack codeword into integer bitfield
+        exp_bits_int = int(exp_q)
+        mant_bits_int = int(mant_q * (2 ** mantissa_bits))
+        codeword = (sign_bit << (bit - 1)) | (exp_bits_int << mantissa_bits) | mant_bits_int
+        codewords.append(codeword)
+
+        # Dequantization
+        quantized_val = ((-1)**sign_bit) * (1 + mant_q) * (2 ** (exp_q - exp_bias))
+        dequantized.append(quantized_val)
+
+    # Return a tensor of integer codewords and dequantized floating point values
+    return torch.tensor(codewords, dtype=torch.int32).view(tensor.shape), torch.tensor(dequantized).view(tensor.shape)
+
 
 
 ################################################################

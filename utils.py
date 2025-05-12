@@ -1,3 +1,5 @@
+import gc
+
 import math
 import random
 
@@ -114,7 +116,12 @@ def quantize_per_tensor_mdlns(t, bit=8, first_base=2, sec_base=3, sec_base_bits=
 
                 candidate_sec_base = candidate_sec_base + step
             candidate_first_base = candidate_first_base + step
-        
+
+    
+    del c_qt, c_nt, conv_lut, b_lut, t_lut
+
+    gc.collect()
+
     return first_base_selected, sec_base_selected, qt, nt
 ###############################################
 def calc_qsnr(original: torch.Tensor, noisy: torch.Tensor) -> float:
@@ -138,59 +145,169 @@ def calc_qsnr(original: torch.Tensor, noisy: torch.Tensor) -> float:
     qsnr = 10 * torch.log10(signal_power / noise_power)
     return qsnr.item()
 ###############################################
-def map_range(t, conv_lut, b_lut, nb_lut, bit=8, sec_base_bits=3, auto_scale=0):
-    # t --> tensor, b --> binary, nb --> non-binary, conv --> integer to MDLNS conversion LUT
+# def map_range(t, conv_lut, b_lut, nb_lut, bit=8, sec_base_bits=3, auto_scale=0):
+#     # t --> tensor, b --> binary, nb --> non-binary, conv --> integer to MDLNS conversion LUT
 
-    conv_lut_signed = torch.tensor(conv_lut + [-x for x in conv_lut]) # conv_lut_signed  contains all the elements from conv_lut plus their negative counterparts
-    # Notice that the above line also converts from conv_lut array to conv_lut_signed tensor
+#     conv_lut_signed = torch.tensor(conv_lut + [-x for x in conv_lut]) # conv_lut_signed  contains all the elements from conv_lut plus their negative counterparts
+#     # Notice that the above line also converts from conv_lut array to conv_lut_signed tensor
     
-    b_lut_expanded = torch.tensor(b_lut + b_lut)
-    nb_lut_expanded = torch.tensor(nb_lut + nb_lut)
+#     b_lut_expanded = torch.tensor(b_lut + b_lut)
+#     nb_lut_expanded = torch.tensor(nb_lut + nb_lut)
+
+#     if auto_scale == 1:
+#         t_min, t_max = t.min(), t.max()
+#         lut_min, lut_max = conv_lut_signed.min(), conv_lut_signed.max()
+
+#         # Scale t to fit within the range of conv_lut_signed
+#         t_scaled = (t - t_min) / (t_max - t_min)
+#         t_scaled = t_scaled * (lut_max - lut_min) + lut_min
+
+#         # Compute differences and get indices of closest LUT entries
+#         diff = torch.abs(t_scaled.unsqueeze(-1) - conv_lut_signed)
+#         indices = torch.argmin(diff, dim=-1)  # shape: (B, L)
+
+#         # Quantized values using those indices
+#         t_dequantized = conv_lut_signed[indices]  # shape: (B, L)
+        
+#         # Reconstruct t in the original range
+#         # Reverse scaling: map from [lut_min, lut_max] back to [t_min, t_max]
+#         t_reconstructed = (t_dequantized - lut_min) / (lut_max - lut_min)
+#         t_reconstructed = t_reconstructed * (t_max - t_min) + t_min
+    
+#         # Adding code
+#         b_dequantized = b_lut_expanded[indices]
+#         nb_dequantized = nb_lut_expanded[indices]
+    
+#     else:        
+#         # Compute differences and get indices of closest LUT entries
+#         diff = torch.abs(t.unsqueeze(-1) - conv_lut_signed)
+#         indices = torch.argmin(diff, dim=-1)  # shape: (B, L)
+
+#         # Quantized values using those indices - could have been one assignment straight to t_reconstructed
+#         t_dequantized = conv_lut_signed[indices]  # shape: (B, L)
+#         t_reconstructed = t_dequantized
+        
+#         # Adding code
+#         b_dequantized = b_lut_expanded[indices]
+#         nb_dequantized = nb_lut_expanded[indices]
+        
+
+#     bin_base_bits = bit - sec_base_bits - 1
+#     qt = encode_qt_vector(t, b_dequantized, nb_dequantized, bin_base_bits, sec_base_bits)
+#     #notice that I am passing "t" as the first argument to use it to extract the signs later in the function
+
+
+#     del b_dequantized
+#     del nb_dequantized
+#     del t_dequantized
+#     del diff
+#     del indices
+#     del conv_lut_signed
+#     del b_lut_expanded
+#     del nb_lut_expanded
+    
+
+#     gc.collect()
+
+#     return qt, t_reconstructed
+
+
+def map_range(t, conv_lut, b_lut, nb_lut, bit=8, sec_base_bits=3, auto_scale=0, chunk_size=512):
+    # Convert LUTs to float32 or int32 tensors
+    conv_lut_signed = torch.tensor(conv_lut + [-x for x in conv_lut], dtype=torch.float32)
+    b_lut_expanded = torch.tensor(b_lut + b_lut, dtype=torch.int32)
+    nb_lut_expanded = torch.tensor(nb_lut + nb_lut, dtype=torch.int32)
+
+    t = t.to(torch.float32)
 
     if auto_scale == 1:
         t_min, t_max = t.min(), t.max()
         lut_min, lut_max = conv_lut_signed.min(), conv_lut_signed.max()
 
-        # Scale t to fit within the range of conv_lut_signed
+        # Scale t to fit within the LUT range
         t_scaled = (t - t_min) / (t_max - t_min)
         t_scaled = t_scaled * (lut_max - lut_min) + lut_min
+    else:
+        t_scaled = t  # no scaling needed
 
-        # Compute differences and get indices of closest LUT entries
-        diff = torch.abs(t_scaled.unsqueeze(-1) - conv_lut_signed)
-        indices = torch.argmin(diff, dim=-1)  # shape: (B, L)
+    # Memory-safe chunked diff + argmin
+    # indices_list = []
+    # for i in range(0, t_scaled.size(0), chunk_size):
+    #     t_chunk = t_scaled[i:i+chunk_size]
+    #     diff_chunk = torch.abs(t_chunk.unsqueeze(-1) - conv_lut_signed)  # shape: (chunk_size, N)
+    #     idx_chunk = torch.argmin(diff_chunk, dim=-1)
+    #     indices_list.append(idx_chunk)
 
-        # Quantized values using those indices
-        t_dequantized = conv_lut_signed[indices]  # shape: (B, L)
-        
-        # Reconstruct t in the original range
-        # Reverse scaling: map from [lut_min, lut_max] back to [t_min, t_max]
+    # indices = torch.cat(indices_list, dim=0)
+
+
+    #indices = safe_argmin_diff(t_scaled, conv_lut_signed, chunk_size_t=256, chunk_size_lut=1024)
+    indices = safe_argmin_diff(t_scaled, conv_lut_signed, chunk_size_t=4096, chunk_size_lut=8192)
+
+
+
+    # Quantized values using LUT
+    t_dequantized = conv_lut_signed[indices]
+
+    # Reconstruct original range if scaled
+    if auto_scale == 1:
         t_reconstructed = (t_dequantized - lut_min) / (lut_max - lut_min)
         t_reconstructed = t_reconstructed * (t_max - t_min) + t_min
-    
-        # Adding code
-        b_dequantized = b_lut_expanded[indices]
-        nb_dequantized = nb_lut_expanded[indices]
-    
-    else:        
-        # Compute differences and get indices of closest LUT entries
-        diff = torch.abs(t.unsqueeze(-1) - conv_lut_signed)
-        indices = torch.argmin(diff, dim=-1)  # shape: (B, L)
-
-        # Quantized values using those indices - could have been one assignment straight to t_reconstructed
-        t_dequantized = conv_lut_signed[indices]  # shape: (B, L)
+    else:
         t_reconstructed = t_dequantized
-        
-        # Adding code
-        b_dequantized = b_lut_expanded[indices]
-        nb_dequantized = nb_lut_expanded[indices]
-        
+
+    # Gather bit representations
+    b_dequantized = b_lut_expanded[indices]
+    nb_dequantized = nb_lut_expanded[indices]
 
     bin_base_bits = bit - sec_base_bits - 1
     qt = encode_qt_vector(t, b_dequantized, nb_dequantized, bin_base_bits, sec_base_bits)
-    #notice that I am passing "t" as the first argument to use it to extract the signs later in the function
+
+    # Clean up
+    del b_dequantized, nb_dequantized, t_dequantized, indices, conv_lut_signed
+    del b_lut_expanded, nb_lut_expanded, t_scaled
+    gc.collect()
 
     return qt, t_reconstructed
+
+
+
 ###############################################
+
+def safe_argmin_diff(t_scaled, conv_lut_signed, chunk_size_t=256, chunk_size_lut=1024):
+    original_shape = t_scaled.shape
+    t_flat = t_scaled.view(-1)  # Flatten to 1D
+
+    indices_list = []
+    for i in range(0, t_flat.size(0), chunk_size_t):
+        t_chunk = t_flat[i:i+chunk_size_t]  # (chunk_size,)
+        best_diff = None
+        best_idx = None
+
+        for j in range(0, conv_lut_signed.size(0), chunk_size_lut):
+            lut_chunk = conv_lut_signed[j:j+chunk_size_lut]  # shape: (lut_chunk_size,)
+            diff_chunk = torch.abs(t_chunk.unsqueeze(-1) - lut_chunk)  # shape: (chunk_size, lut_chunk_size)
+            idx_chunk = torch.argmin(diff_chunk, dim=-1)  # shape: (chunk_size,)
+            val_chunk = diff_chunk[torch.arange(diff_chunk.size(0)), idx_chunk]
+
+            if best_diff is None:
+                best_diff = val_chunk
+                best_idx = idx_chunk + j
+            else:
+                update_mask = val_chunk < best_diff
+                best_diff[update_mask] = val_chunk[update_mask]
+                best_idx[update_mask] = idx_chunk[update_mask] + j
+
+            del diff_chunk, idx_chunk, val_chunk, lut_chunk
+            gc.collect()
+
+        indices_list.append(best_idx)
+
+    indices_flat = torch.cat(indices_list, dim=0)
+    return indices_flat.view(original_shape)  # Reshape back to match input
+
+###############################################
+
 def signed_to_unsigned_vector(val, bits):
     # Convert signed integers to unsigned using two's complement, vectorized
     mask = val < 0
@@ -316,10 +433,27 @@ def quantize_per_tensor_lns(tensor, lns_base=2, exp_bits=3):
     sign_bit = (tensor < 0).to(torch.uint8)
     tensor_abs = tensor.abs()
 
-    def compute_qsnr(original, reconstructed):
+    # def compute_qsnr(original, reconstructed):
+    #     signal_power = torch.sum(original**2)
+    #     error_power = torch.sum((original - reconstructed)**2) + 1e-12  # avoid division by zero
+    #     return 10 * torch.log10(signal_power / error_power)
+
+    def compute_qsnr(original, reconstructed, eps=1e-12):
         signal_power = torch.sum(original**2)
-        error_power = torch.sum((original - reconstructed)**2) + 1e-12  # avoid division by zero
-        return 10 * torch.log10(signal_power / error_power)
+        error_power = torch.sum((original - reconstructed)**2) + eps  # safe epsilon for stability
+
+        # If signal power is too small, define QSNR as 0 (or some fallback)
+        if signal_power < eps:
+            #return torch.tensor(0.0, device=original.device)
+            return torch.tensor(-1000.0, device=original.device)
+
+        ratio = signal_power / error_power
+
+        # Clamp ratio to avoid taking log(0) or log(negative)
+        ratio = torch.clamp(ratio, min=eps)
+
+        return 10 * torch.log10(ratio)
+
 
     def quantize_lns(tensor_abs, base, exp_bits):
         log_tensor = torch.log(tensor_abs + 1e-12) / torch.log(torch.tensor(base))
@@ -340,9 +474,21 @@ def quantize_per_tensor_lns(tensor, lns_base=2, exp_bits=3):
         
         return quantized_exp, tensor_dequant
 
+    test = tensor_abs.max()/tensor_abs.min()
     if lns_base == 1000:
+        
         best_qsnr = -float('inf')
-        base_candidates = torch.linspace(1.1, 10, 200)
+        #base_candidates = torch.linspace(1.1, 10, 200)
+        #base_candidates = torch.linspace(0.1, 10, 200)
+        
+        #Initialize
+        # base_selected = 2.0
+        # quantized_exp_init, tensor_dequant_init = quantize_lns(tensor_abs, 2.0, exp_bits)
+        # best_quantized_exp = quantized_exp_init
+        # best_tensor_dequant = tensor_dequant_init
+
+        base_candidates = torch.exp(torch.linspace(torch.log(torch.tensor(1.2)), torch.log(torch.tensor(3.5)), 200))
+
         for base_candidate in base_candidates:
             quantized_exp, tensor_dequant_candidate = quantize_lns(tensor_abs, base_candidate.item(), exp_bits)
             qsnr = compute_qsnr(tensor_abs, tensor_dequant_candidate)

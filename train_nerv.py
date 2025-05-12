@@ -42,7 +42,7 @@ def main():
     
     # snerv
     parser.add_argument('--num_frames', type=int, default=132, help='number of frames to be used for testing/validation/evaluation')
-    parser.add_argument('--qmode', type=str, default='integer', help='numbering representation used for quantization', choices=['integer', 'lns', 'mdlns', 'minifloat'])
+    parser.add_argument('--qmode', type=str, default='integer', help='numbering representation used for quantization', choices=['integer', 'lns', 'mdlns', 'minifloat', 'mixed'])
 
     # snerv scalability parameters
     parser.add_argument('--num_prec_layers', type=int, default=1, help='number of precision layers - default is 1 (i.e., only base) layer')
@@ -71,7 +71,8 @@ def main():
     # minifloat
     parser.add_argument('--minifloat_exp_num_bits', type=int, nargs='+', default=[3, 3, 3, 3], help='for every precision layer, number of bits allocated for the minifloat exponent')
 
-
+    # Test identifier to dump in different folders
+    parser.add_argument('--run_id', type=str, default='_1')
 
     # embedding parameters
     parser.add_argument('--embed', type=str, default='1.25_80', help='base value/embed length for position encoding')
@@ -562,6 +563,8 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
                         lns_base_selected[layer_index-1], quant_v, new_v = quantize_per_tensor_lns(v, args.lns_base, args.lns_exp_num_bits[0]) # pass highest quality/full precision tensor
                     elif args.qmode == 'minifloat':
                         quant_v, new_v = quantize_per_tensor_minifloat(v, args.quant_bit, args.minifloat_exp_num_bits[0]) # pass highest quality/full precision tensor
+                    elif args.qmode == 'mixed':
+                        first_base_selected[layer_index-1], sec_base_selected[layer_index-1], quant_v, new_v = quantize_per_tensor_mdlns(v, args.quant_bit, args.mdlns_first_base, args.mdlns_second_base, args.mdlns_second_base_exp_num_bits[0], args.mdlns_sweep_start, args.mdlns_sweep_end, args.mdlns_sweep_step, args.mdlns_auto_scale, args.quant_axis if large_tf else -1) # pass highest quality/full precision tensor
 
                     cur_ckt[k] = new_v
             
@@ -574,6 +577,13 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
                         lns_base_selected[layer_index-1], quant_v, new_v = quantize_per_tensor_lns(v-cur_ckt[k], args.lns_base, args.lns_exp_num_bits[layer_index-1]) # pass delta between highest quality/full precision tensor, and the latest tensor uptil last enhancement layer
                     elif args.qmode == 'minifloat':
                         quant_v, new_v = quantize_per_tensor_minifloat(v-cur_ckt[k], args.quant_bit, args.minifloat_exp_num_bits[layer_index-1]) # pass highest quality/full precision tensor
+                    elif args.qmode == 'mixed':
+                        quant_v, new_v = quantize_per_tensor(v-cur_ckt[k], args.quant_bit_enh[layer_index-2], args.quant_axis if large_tf else -1) # pass delta between highest quality/full precision tensor, and the latest tensor uptil last enhancement layer
+                        # if layer_index == 2: 
+                        #     first_base_selected[layer_index-1], sec_base_selected[layer_index-1], quant_v, new_v = quantize_per_tensor_mdlns(v-cur_ckt[k], args.quant_bit_enh[layer_index-2], args.mdlns_first_base, args.mdlns_second_base, args.mdlns_second_base_exp_num_bits[layer_index-1], args.mdlns_sweep_start, args.mdlns_sweep_end, args.mdlns_sweep_step, args.mdlns_auto_scale, args.quant_axis if large_tf else -1) # pass delta between highest quality/full precision tensor, and the latest tensor uptil last enhancement layer
+                        # else:
+                        #     quant_v, new_v = quantize_per_tensor(v-cur_ckt[k], args.quant_bit_enh[layer_index-2], args.quant_axis if large_tf else -1) # pass delta between highest quality/full precision tensor, and the latest tensor uptil last enhancement layer
+
                     
                     
                     cur_ckt[k] = cur_ckt[k] + new_v # include/accumulate enhancement layer(s)
@@ -639,6 +649,20 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
                             f.write(print_str + '\n')
 
 
+                if layer_index == 1:
+                    print_str = f'{args.qmode}|{args.num_frames} frames|{args.num_prec_layers} layers|{args.quant_bit}-{args.quant_bit_enh} - # bits for Second MDLNS exponent for base layer is: {args.mdlns_second_base_exp_num_bits[0]}'
+                    print(print_str)
+                    if local_rank in [0, None]:
+                        with open('{}/eval.txt'.format(args.outf), 'a') as f:
+                            f.write(print_str + '\n')
+                else:
+                    print_str = f'{args.qmode}|{args.num_frames} frames|{args.num_prec_layers} layers|{args.quant_bit}-{args.quant_bit_enh} - # bits for Second MDLNS exponent for layer #{layer_index-1}: {args.mdlns_second_base_exp_num_bits[layer_index-1]}'
+                    print(print_str)
+                    if local_rank in [0, None]:
+                        with open('{}/eval.txt'.format(args.outf), 'a') as f:
+                            f.write(print_str + '\n')
+
+
             elif args.qmode == 'lns':
                 if layer_index == 1:
                     print_str = f'{args.qmode}|{args.num_frames} frames|{args.num_prec_layers} layers|{args.quant_bit}-{args.quant_bit_enh} - LNS base selected for base layer is: {lns_base_selected[0]}'
@@ -697,7 +721,8 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
         bitdepth_per_RGB_pixel = 3*8 # assuming 8 bits per color sample
         total_number_of_bits_per_video_sequence = total_number_of_pixels_per_video_sequence * bitdepth_per_RGB_pixel
 
-        compression_percentage_quant = 100*total_number_of_bits_for_weights/total_number_of_bits_per_video_sequence
+        #compression_percentage_quant = 100*total_number_of_bits_for_weights/total_number_of_bits_per_video_sequence
+        compression_percentage_quant = 100*(total_number_of_bits_per_video_sequence-total_number_of_bits_for_weights)/total_number_of_bits_per_video_sequence
 
         #snerv
         # generating HuffmanCoding table
@@ -708,12 +733,12 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
         total_bits = 0
         for num, freq in num_freq.items():
             total_bits += freq * sym_bit_dict[num]
-        avg_bits = total_bits / len(input_code_list)    
+        # avg_bits = total_bits / len(input_code_list)    
         # import pdb; pdb.set_trace; from IPython import embed; embed()       
         # encoding_efficiency = avg_bits / args.quant_bit
  
-        bpp_bits_per_pixel_quant_entropy = total_bits/total_number_of_pixels_per_video_sequence
-        compression_percentage_quant_entropy = 100*total_bits/total_number_of_bits_per_video_sequence
+        # bpp_bits_per_pixel_quant_entropy = total_bits/total_number_of_pixels_per_video_sequence
+        # compression_percentage_quant_entropy = 100*total_bits/total_number_of_bits_per_video_sequence
 
 
         print_str = f'{args.qmode}|{args.num_frames} frames|{args.num_prec_layers} layers|{args.quant_bit}-{args.quant_bit_enh} - bpp after pruning and quantization: {bpp_bits_per_pixel_quant}'
@@ -722,31 +747,32 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
             with open('{}/eval.txt'.format(args.outf), 'a') as f:
                 f.write(print_str + '\n')
 
-        print_str = f'{args.qmode}|{args.num_frames} frames|{args.num_prec_layers} layers|{args.quant_bit}-{args.quant_bit_enh} - This is equivalent to a % compression ratio due to pruning followed by quantization: {compression_percentage_quant}%'
+        #print_str = f'{args.qmode}|{args.num_frames} frames|{args.num_prec_layers} layers|{args.quant_bit}-{args.quant_bit_enh} - This is equivalent to a % compression ratio due to pruning followed by quantization: {compression_percentage_quant}%'
+        print_str = f'{args.qmode}|{args.num_frames} frames|{args.num_prec_layers} layers|{args.quant_bit}-{args.quant_bit_enh} - This is equivalent to a % bitrate saving due to pruning followed by quantization of: {compression_percentage_quant} %'
         print(print_str)
         if local_rank in [0, None]:
             with open('{}/eval.txt'.format(args.outf), 'a') as f:
                 f.write(print_str + '\n')
 
         
-        print_str = f'{args.qmode}|{args.num_frames} frames|{args.num_prec_layers} layers|{args.quant_bit}-{args.quant_bit_enh} - bpp after pruning and quantization, followed by entropy coding: {bpp_bits_per_pixel_quant_entropy}'
-        print(print_str)
-        if local_rank in [0, None]:
-            with open('{}/eval.txt'.format(args.outf), 'a') as f:
-                f.write(print_str + '\n')
+        # print_str = f'{args.qmode}|{args.num_frames} frames|{args.num_prec_layers} layers|{args.quant_bit}-{args.quant_bit_enh} - bpp after pruning and quantization, followed by entropy coding: {bpp_bits_per_pixel_quant_entropy}'
+        # print(print_str)
+        # if local_rank in [0, None]:
+        #     with open('{}/eval.txt'.format(args.outf), 'a') as f:
+        #         f.write(print_str + '\n')
         
-        print_str = f'{args.qmode}|{args.num_frames} frames|{args.num_prec_layers} layers|{args.quant_bit}-{args.quant_bit_enh} - This is equivalent to a % compression ratio due to pruning, quantization, and entropy coding: {compression_percentage_quant_entropy}%'
-        print(print_str)
-        if local_rank in [0, None]:
-            with open('{}/eval.txt'.format(args.outf), 'a') as f:
-                f.write(print_str + '\n')
+        # print_str = f'{args.qmode}|{args.num_frames} frames|{args.num_prec_layers} layers|{args.quant_bit}-{args.quant_bit_enh} - This is equivalent to a % compression ratio due to pruning, quantization, and entropy coding: {compression_percentage_quant_entropy}%'
+        # print(print_str)
+        # if local_rank in [0, None]:
+        #     with open('{}/eval.txt'.format(args.outf), 'a') as f:
+        #         f.write(print_str + '\n')
 
         
-        print_str = f'{args.qmode}|{args.num_frames} frames|{args.num_prec_layers} layers|{args.quant_bit}-{args.quant_bit_enh} - So, entropy coding provides an extra gain of: {compression_percentage_quant-compression_percentage_quant_entropy}%'
-        print(print_str)
-        if local_rank in [0, None]:
-            with open('{}/eval.txt'.format(args.outf), 'a') as f:
-                f.write(print_str + '\n')
+        # print_str = f'{args.qmode}|{args.num_frames} frames|{args.num_prec_layers} layers|{args.quant_bit}-{args.quant_bit_enh} - So, entropy coding provides an extra gain of: {compression_percentage_quant-compression_percentage_quant_entropy}%'
+        # print(print_str)
+        # if local_rank in [0, None]:
+        #     with open('{}/eval.txt'.format(args.outf), 'a') as f:
+        #         f.write(print_str + '\n')
 
          
         print_str = f'-------------------------------------'
@@ -770,7 +796,9 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
     msssim_list = []
     if args.dump_images:
         from torchvision.utils import save_image
-        visual_dir = f'{args.outf}/visualize'
+        #visual_dir = f'{args.outf}/visualize'
+        visual_dir = f'{args.outf}/visualize{args.run_id}'
+
         print(f'Saving predictions to {visual_dir}')
         if not os.path.isdir(visual_dir):
             os.makedirs(visual_dir)

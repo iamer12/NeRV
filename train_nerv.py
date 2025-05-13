@@ -25,6 +25,8 @@ from utils import *
 #snerv To allow limited range of tested data
 from torch.utils.data import Subset
 
+import sys
+
 
 
 def main():
@@ -529,6 +531,8 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
         v_sqr = 0
         v_ssd = [0] * args.num_prec_layers
         sqnr = [0] * args.num_prec_layers
+        plot_flag = [1] * args.num_prec_layers
+
         first_base_selected = [0] * args.num_prec_layers     # If a sweep for first base is activated, every precision layer will have its selected first based stored in the corresponding element of this list
         sec_base_selected = [0] * args.num_prec_layers     # If a sweep for second base is activated, every precision layer will have its selected second based stored in the corresponding element of this list
 
@@ -555,10 +559,38 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
             for layer_index in range(1, args.num_prec_layers+1): # for base layer and every enhancement layer
  
                 if layer_index == 1: # base layer
+
+                    # # Just for plotting
+                    first_base_selected[layer_index-1], sec_base_selected[layer_index-1], quant_v, new_v_mdlns, new_sorted = quantize_per_tensor_mdlns(v, args.quant_bit, args.mdlns_first_base, args.mdlns_second_base, args.mdlns_second_base_exp_num_bits[0], args.mdlns_sweep_start, args.mdlns_sweep_end, args.mdlns_sweep_step, args.mdlns_auto_scale, args.quant_axis if large_tf else -1) # pass highest quality/full precision tensor
+                    plot_tensor_histogram(
+                        tensor=v,
+                        new_tensor_mdlns=new_sorted,
+                        quant_bits=args.quant_bit,
+                        title="FBase Layer Distribution",
+                        flag=1,
+                        save_path="base_layer_histogram.png"
+                    )
+                    sys.exit()
+
+                    # #quant_v, new_v_int = quantize_per_tensor(v, args.quant_bit, args.quant_axis if large_tf else -1) # pass highest quality/full precision tensor
+                    # first_base_selected[layer_index-1], sec_base_selected[layer_index-1], quant_v, new_v_mdlns, new_sorted = quantize_per_tensor_mdlns(v, args.quant_bit, args.mdlns_first_base, args.mdlns_second_base, args.mdlns_second_base_exp_num_bits[0], args.mdlns_sweep_start, args.mdlns_sweep_end, args.mdlns_sweep_step, args.mdlns_auto_scale, args.quant_axis if large_tf else -1) # pass highest quality/full precision tensor
+                    # #plot_tensor_histogram(v, new_v_int, new_sorted, title="Base Layer Distribution", flag=1, save_path="base_layer_histogram.png")
+                    # #plot_tensor_histogram(v, new_sorted, args.quant_bit, title="Base Layer Distribution", flag=1, save_path="base_layer_histogram.png")
+                    # plot_tensor_histogram(
+                    #     tensor=v,
+                    #     new_tensor_mdlns=new_sorted,
+                    #     quant_bits=args.quant_bit,
+                    #     title="Base Layer Distribution",
+                    #     flag=1,
+                    #     save_path="base_layer_histogram.png"
+                    # )
+                    # sys.exit()
+
                     if args.qmode == 'integer':
                         quant_v, new_v = quantize_per_tensor(v, args.quant_bit, args.quant_axis if large_tf else -1) # pass highest quality/full precision tensor
                     elif args.qmode == 'mdlns':
-                        first_base_selected[layer_index-1], sec_base_selected[layer_index-1], quant_v, new_v = quantize_per_tensor_mdlns(v, args.quant_bit, args.mdlns_first_base, args.mdlns_second_base, args.mdlns_second_base_exp_num_bits[0], args.mdlns_sweep_start, args.mdlns_sweep_end, args.mdlns_sweep_step, args.mdlns_auto_scale, args.quant_axis if large_tf else -1) # pass highest quality/full precision tensor
+                        #first_base_selected[layer_index-1], sec_base_selected[layer_index-1], quant_v, new_v = quantize_per_tensor_mdlns(v, args.quant_bit, args.mdlns_first_base, args.mdlns_second_base, args.mdlns_second_base_exp_num_bits[0], args.mdlns_sweep_start, args.mdlns_sweep_end, args.mdlns_sweep_step, args.mdlns_auto_scale, args.quant_axis if large_tf else -1) # pass highest quality/full precision tensor
+                        first_base_selected[layer_index-1], sec_base_selected[layer_index-1], quant_v, new_v, new_sorted = quantize_per_tensor_mdlns(v, args.quant_bit, args.mdlns_first_base, args.mdlns_second_base, args.mdlns_second_base_exp_num_bits[0], args.mdlns_sweep_start, args.mdlns_sweep_end, args.mdlns_sweep_step, args.mdlns_auto_scale, args.quant_axis if large_tf else -1) # pass highest quality/full precision tensor
                     elif args.qmode == 'lns':
                         lns_base_selected[layer_index-1], quant_v, new_v = quantize_per_tensor_lns(v, args.lns_base, args.lns_exp_num_bits[0]) # pass highest quality/full precision tensor
                     elif args.qmode == 'minifloat':
@@ -566,9 +598,31 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
                     elif args.qmode == 'mixed':
                         first_base_selected[layer_index-1], sec_base_selected[layer_index-1], quant_v, new_v = quantize_per_tensor_mdlns(v, args.quant_bit, args.mdlns_first_base, args.mdlns_second_base, args.mdlns_second_base_exp_num_bits[0], args.mdlns_sweep_start, args.mdlns_sweep_end, args.mdlns_sweep_step, args.mdlns_auto_scale, args.quant_axis if large_tf else -1) # pass highest quality/full precision tensor
 
+                    # maybe_plot_quantization(v, new_v, plot_flag[0], args.qmode, args.lns_base, args.mdlns_second_base)
+                    # plot_tensor_histogram(v, title="Base Layer Distribution", flag=1, save_path="base_layer_histogram.png")
+                    # plot_flag[0] = 0
+                    
                     cur_ckt[k] = new_v
+
+                    
+
             
                 else: # enhancement layer(s)
+
+
+                    # Just for plotting
+                    first_base_selected[layer_index-1], sec_base_selected[layer_index-1], quant_v, new_v_mdlns, new_sorted = quantize_per_tensor_mdlns(v-cur_ckt[k], args.quant_bit_enh[layer_index-2], args.mdlns_first_base, args.mdlns_second_base, args.mdlns_second_base_exp_num_bits[layer_index-1], args.mdlns_sweep_start, args.mdlns_sweep_end, args.mdlns_sweep_step, args.mdlns_auto_scale, args.quant_axis if large_tf else -1) # pass delta between highest quality/full precision tensor, and the latest tensor uptil last enhancement layer
+                    
+                    plot_tensor_histogram(
+                        tensor=v-cur_ckt[k],
+                        new_tensor_mdlns=new_sorted,
+                        quant_bits=args.quant_bit_enh[layer_index-2],
+                        title="First Enhancement Layer Distribution",
+                        flag=1,
+                        save_path="enhancement_layer_histogram.png"
+                    )
+                    sys.exit()
+
                     if args.qmode == 'integer':
                         quant_v, new_v = quantize_per_tensor(v-cur_ckt[k], args.quant_bit_enh[layer_index-2], args.quant_axis if large_tf else -1) # pass delta between highest quality/full precision tensor, and the latest tensor uptil last enhancement layer
                     elif args.qmode == 'mdlns':
@@ -586,7 +640,17 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
 
                     
                     
+                    
+                    
+                    # maybe_plot_quantization(v-cur_ckt[k], new_v, plot_flag[layer_index-1], args.qmode, args.lns_base, args.mdlns_second_base)
+                    # plot_flag[layer_index-1] = 0
+
+                    # if layer_index == 3:
+                    #     sys.exit()
+
                     cur_ckt[k] = cur_ckt[k] + new_v # include/accumulate enhancement layer(s)
+
+                    
             
                 
                 v_ssd[layer_index-1] = v_ssd[layer_index-1] + ((v-cur_ckt[k])**2).sum() # calculating the power of the error signal for the particular precision layer
@@ -864,3 +928,4 @@ def evaluate(model, val_dataloader, pe, local_rank, args):
 
 if __name__ == '__main__':
     main()
+    plt.show()  # <<< Add this

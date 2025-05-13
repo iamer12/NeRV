@@ -10,6 +10,14 @@ import torch.nn as nn
 import torch.nn.functional as F
 from pytorch_msssim import ms_ssim, ssim
 
+import matplotlib.pyplot as plt
+import matplotlib.lines as mlines
+
+from datetime import datetime
+
+import os
+
+
 ###############################################
 # snerv
 # Adding some utility functions to evaluate various modes of quantization with the scalability feature
@@ -60,7 +68,7 @@ def quantize_per_tensor_mdlns(t, bit=8, first_base=2, sec_base=3, sec_base_bits=
                     b_lut[index] = bx
                     t_lut[index] = tx
                     index = index + 1
-            c_qt, c_nt = map_range(t, conv_lut, b_lut, t_lut, bit, sec_base_bits, auto_scale)
+            c_qt, c_nt, sorted = map_range(t, conv_lut, b_lut, t_lut, bit, sec_base_bits, auto_scale)
 
             c_qsnr = calc_qsnr(t, c_nt)
             if c_qsnr > max_qsnr:
@@ -122,7 +130,7 @@ def quantize_per_tensor_mdlns(t, bit=8, first_base=2, sec_base=3, sec_base_bits=
 
     gc.collect()
 
-    return first_base_selected, sec_base_selected, qt, nt
+    return first_base_selected, sec_base_selected, qt, nt, sorted
 ###############################################
 def calc_qsnr(original: torch.Tensor, noisy: torch.Tensor) -> float:
     
@@ -215,6 +223,9 @@ def calc_qsnr(original: torch.Tensor, noisy: torch.Tensor) -> float:
 def map_range(t, conv_lut, b_lut, nb_lut, bit=8, sec_base_bits=3, auto_scale=0, chunk_size=512):
     # Convert LUTs to float32 or int32 tensors
     conv_lut_signed = torch.tensor(conv_lut + [-x for x in conv_lut], dtype=torch.float32)
+
+    sorted_conv_lut_signed, _ = torch.sort(conv_lut_signed)
+
     b_lut_expanded = torch.tensor(b_lut + b_lut, dtype=torch.int32)
     nb_lut_expanded = torch.tensor(nb_lut + nb_lut, dtype=torch.int32)
 
@@ -268,7 +279,7 @@ def map_range(t, conv_lut, b_lut, nb_lut, bit=8, sec_base_bits=3, auto_scale=0, 
     del b_lut_expanded, nb_lut_expanded, t_scaled
     gc.collect()
 
-    return qt, t_reconstructed
+    return qt, t_reconstructed, sorted_conv_lut_signed
 
 
 
@@ -562,6 +573,628 @@ def quantize_per_tensor_minifloat(tensor, bit=8, exp_bits=4):
 
     # Return a tensor of integer codewords and dequantized floating point values
     return torch.tensor(codewords, dtype=torch.int32).view(tensor.shape), torch.tensor(dequantized).view(tensor.shape)
+
+################################################################
+################################################################
+################################################################
+################################################################
+
+
+# def maybe_plot_quantization(input_tensor, quantized_tensor, flag):
+#     """
+#     Plots quantized values and quantization errors if flag == 1.
+    
+#     Args:
+#         input_tensor (torch.Tensor or np.ndarray): The original input tensor (full precision).
+#         quantized_tensor (torch.Tensor or np.ndarray): The corresponding quantized tensor.
+#         flag (int): 0 means do nothing, 1 means plot the curves.
+#     """
+#     if flag == 0:
+#         return  # do nothing
+
+#     # Convert to numpy if needed
+#     if hasattr(input_tensor, 'detach'):
+#         input_tensor = input_tensor.detach().cpu().numpy()
+#     if hasattr(quantized_tensor, 'detach'):
+#         quantized_tensor = quantized_tensor.detach().cpu().numpy()
+
+#     # Flatten in case tensors are not 1D
+#     input_tensor = input_tensor.flatten()
+#     quantized_tensor = quantized_tensor.flatten()
+
+#     # Sort the input values for cleaner plotting
+#     sort_indices = np.argsort(input_tensor)
+#     input_sorted = input_tensor[sort_indices]
+#     quantized_sorted = quantized_tensor[sort_indices]
+
+#     # Compute the error
+#     error = input_sorted - quantized_sorted
+
+#     # Plot
+#     plt.figure(figsize=(10, 5))
+#     plt.plot(input_sorted, quantized_sorted, label="Quantized Value", marker='.', linestyle='-', markersize=2)
+#     plt.plot(input_sorted, error, label="Quantization Error", marker='.', linestyle='--', markersize=2)
+#     plt.xlabel("Original Input Value")
+#     plt.ylabel("Value")
+#     plt.title("Quantization vs Error")
+#     plt.grid(True)
+#     plt.legend()
+#     plt.tight_layout()
+#     plt.show()
+
+
+
+global_fig_counter = [1]  # Global figure counter
+
+def maybe_plot_quantization(input_tensor, quantized_tensor, flag, qmode='integer', lns_base=2, mdlns_base=3, output_dir='output_plots', run_id=None):
+    if flag == 1:
+
+
+        if qmode == 'integer':
+            st1 = 'Integer'
+        elif qmode == 'minifloat':
+            st1 = 'Minifloat'
+        elif qmode == 'lns':
+            if lns_base == 1000:
+                st1 = 'LNS Sweep'
+            else:
+                st1 = 'LNS (2)'
+        elif qmode == 'mdlns':
+            if mdlns_base == 1000:
+                st1 = 'MDLNS Sweep (2,X)'
+            else:
+                st1 = 'MDLNS (2,3)'
+
+        
+        if global_fig_counter[0] == 1:
+            st2 = 'Base Layer'
+        elif global_fig_counter[0] == 2:
+            st2 = 'Enhancement Layer #1'
+        elif global_fig_counter[0] == 3:
+            st2 = 'Enhancement Layer #2'
+
+
+        input_flat = input_tensor.flatten().cpu().numpy()
+        quant_flat = quantized_tensor.flatten().cpu().numpy()
+
+        # Create output directory if it does not exist
+        os.makedirs(output_dir, exist_ok=True)
+
+        fig, ax1 = plt.subplots()
+
+        # Plot quantized values vs input values
+        ax1.plot(input_flat, quant_flat, '.', markersize=2, label='Quantized vs Input')
+        ax1.set_xlabel('Input Value')
+        ax1.set_ylabel('Quantized Value')
+        ax1.grid(True)
+
+        # Plot error vs input values on secondary axis
+        ax2 = ax1.twinx()
+        error = abs(quant_flat - input_flat)
+        ax2.plot(input_flat, error, '.', markersize=2, alpha=0.5, color='r', label='Abs Error')
+        ax2.set_ylabel('Abs Error')
+         
+         # Set the y-axis range for the error plot
+        max_abs_input = abs(input_flat).max()
+        ax2.set_ylim(0, max_abs_input)
+
+        #fig.suptitle(f'Quantization Plot #{global_fig_counter[0]}')
+        fig.suptitle(f'{st1} Quantization Plot for {st2}')
+
+        # Build filename
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        if run_id is not None:
+            #base_filename = f'figure_{global_fig_counter[0]}_run{run_id}_{timestamp}'
+            base_filename = f'{st1}_{st2}_figure_{global_fig_counter[0]}_run{run_id}_{timestamp}'
+        else:
+            #base_filename = f'figure_{global_fig_counter[0]}_{timestamp}'
+            base_filename = f'{st1}_{st2}_figure_{global_fig_counter[0]}_{timestamp}'
+
+        png_path = os.path.join(output_dir, base_filename + '.png')
+        pdf_path = os.path.join(output_dir, base_filename + '.pdf')
+
+        # Save as PNG and PDF
+        fig.savefig(png_path, bbox_inches='tight')
+        fig.savefig(pdf_path, bbox_inches='tight')
+        plt.close(fig)  # Free memory
+
+        print(f"Saved {png_path} and {pdf_path}")
+
+        global_fig_counter[0] += 1
+
+################################################################
+################################################################
+
+
+# def plot_tensor_histogram(tensor, title="Tensor Histogram", flag=1, save_path=None):
+#     """
+#     Plots a histogram of the values inside a tensor.
+
+#     Args:
+#         tensor (torch.Tensor): Input tensor (1D).
+#         title (str): Title of the plot.
+#         flag (int): If 0, do nothing. If 1, plot the histogram.
+#         save_path (str or None): If provided, saves the figure to this path.
+#     """
+#     if flag == 0:
+#         return
+
+#     tensor_np = tensor.cpu().numpy()  # Convert to numpy array if needed
+#     num_bins = min(50, max(10, tensor_np.shape[0] // 10))  # Adaptive number of bins
+
+#     plt.figure(figsize=(8, 4))
+#     plt.hist(tensor_np, bins=num_bins, edgecolor='black', alpha=0.75)
+#     plt.title(title)
+#     plt.xlabel('Value')
+#     plt.ylabel('Frequency')
+#     plt.grid(True, linestyle='--', alpha=0.7)
+#     plt.tight_layout()
+
+#     if save_path is not None:
+#         plt.savefig(save_path, dpi=300)  # Save figure at high quality
+#     plt.show()
+
+
+import matplotlib.pyplot as plt
+import torch
+import numpy as np
+
+# def plot_tensor_histogram(
+#     tensor,
+#     title="Tensor Histogram",
+#     flag=1,
+#     save_path=None,
+#     new_tensor_int=None,
+#     new_tensor_mdlns=None
+# ):
+    
+# def plot_tensor_histogram(
+#     tensor,
+#     new_tensor_int=None,
+#     new_tensor_mdlns=None,
+#     title="Tensor Histogram",
+#     flag=1,
+#     save_path=None
+# ):
+#     """
+#     Plots a histogram of the values inside a tensor, optionally overlaying
+#     codeword distributions for INT and MDLNS quantizations as vertical lines.
+
+#     Args:
+#         tensor (torch.Tensor): Input tensor (1D).
+#         title (str): Title of the plot.
+#         flag (int): If 0, do nothing. If 1, plot the histogram.
+#         save_path (str or None): If provided, saves the figure to this path.
+#         new_tensor_int (torch.Tensor or None): Reconstructed tensor using INT quantization.
+#         new_tensor_mdlns (torch.Tensor or None): Reconstructed tensor using MDLNS quantization.
+#     """
+#     if flag == 0:
+#         return
+
+#     tensor_np = tensor.cpu().numpy()
+#     num_bins = min(50, max(10, tensor_np.shape[0] // 10))  # Adaptive number of bins
+
+#     plt.figure(figsize=(10, 5))
+
+#     # Plot histogram of the original tensor
+#     plt.hist(tensor_np, bins=num_bins, edgecolor='black', alpha=0.6, color='gray', label='Original Tensor')
+
+
+#     x_min, x_max = tensor_np.min(), tensor_np.max()
+#     plt.xlim(x_min, x_max)
+
+#     # Overlay INT codeword vertical lines
+#     if new_tensor_int is not None:
+#         new_int_np = new_tensor_int.cpu().numpy()
+#         unique_int_values = np.unique(new_int_np)
+#         for x in unique_int_values:
+#             plt.vlines(x, ymin=0, ymax=0.5, colors='blue', linestyles='dashed', linewidth=1)
+
+#     # Overlay MDLNS codeword vertical lines
+#     if new_tensor_mdlns is not None:
+#         new_mdlns_np = new_tensor_mdlns.cpu().numpy()
+#         unique_mdlns_values = np.unique(new_mdlns_np)
+#         for x in unique_mdlns_values:
+#             plt.vlines(x, ymin=0, ymax=0.7, colors='red', linestyles='solid', linewidth=1)
+
+#     plt.title(title)
+#     plt.xlabel('Value')
+#     plt.ylabel('Frequency')
+#     plt.grid(True, linestyle='--', alpha=0.7)
+#     plt.legend(["Original Tensor", "INT Codewords", "MDLNS Codewords"])
+#     plt.tight_layout()
+
+#     if save_path is not None:
+#         plt.savefig(save_path, dpi=300)
+
+#     plt.show()
+
+
+
+# def plot_tensor_histogram(
+#     tensor,
+#     new_tensor_int=None,
+#     new_tensor_mdlns=None,
+#     title="Tensor Histogram",
+#     flag=1,
+#     save_path=None
+# ):
+#     """
+#     Plots a histogram of the values inside a tensor, optionally overlaying
+#     codeword distributions for INT and MDLNS quantizations as vertical lines.
+
+#     Args:
+#         tensor (torch.Tensor): Input tensor (1D).
+#         new_tensor_int (torch.Tensor or None): Reconstructed tensor using INT quantization.
+#         new_tensor_mdlns (torch.Tensor or None): Reconstructed tensor using MDLNS quantization.
+#         title (str): Title of the plot.
+#         flag (int): If 0, do nothing. If 1, plot the histogram.
+#         save_path (str or None): If provided, saves the figure to this path.
+#     """
+#     if flag == 0:
+#         return
+
+#     tensor_np = tensor.cpu().numpy()
+#     num_bins = min(50, max(10, tensor_np.shape[0] // 10))  # Adaptive number of bins
+
+#     plt.figure(figsize=(10, 5))
+
+#     # Plot histogram and capture histogram max height
+#     n, bins, patches = plt.hist(tensor_np, bins=num_bins, edgecolor='black', alpha=0.6, color='gray')
+#     hist_max_height = np.max(n)
+
+#     # Fix x-axis range to match tensor
+#     x_min, x_max = tensor_np.min(), tensor_np.max()
+#     plt.xlim(x_min, x_max)
+
+#     # Overlay INT codeword vertical lines
+#     if new_tensor_int is not None:
+#         new_int_np = new_tensor_int.cpu().numpy()
+#         unique_int_values = np.unique(new_int_np)
+#         for x in unique_int_values:
+#             plt.vlines(x, ymin=0, ymax=4 * hist_max_height, colors='blue', linestyles='dashed', linewidth=1)
+
+#     # Overlay MDLNS codeword vertical lines
+#     if new_tensor_mdlns is not None:
+#         new_mdlns_np = new_tensor_mdlns.cpu().numpy()
+#         unique_mdlns_values = np.unique(new_mdlns_np)
+#         for x in unique_mdlns_values:
+#             plt.vlines(x, ymin=0, ymax=4 * hist_max_height, colors='red', linestyles='solid', linewidth=1)
+
+#     plt.title(title)
+#     plt.xlabel('Value')
+#     plt.ylabel('Frequency')
+#     plt.grid(True, linestyle='--', alpha=0.7)
+#     plt.legend(["Original Tensor", "INT Codewords", "MDLNS Codewords"], loc='upper right')
+#     plt.tight_layout()
+
+#     if save_path is not None:
+#         plt.savefig(save_path, dpi=300)
+
+#     plt.show()
+
+
+
+def plot_tensor_histogram(
+    tensor,
+    new_tensor_mdlns=None,
+    quant_bits=None,
+    title="Tensor Histogram",
+    flag=1,
+    save_path=None
+):
+    """
+    Plots a histogram of the values inside a tensor, optionally overlaying
+    codeword distributions for INT (uniform) and MDLNS (reconstructed) quantizations.
+
+    Args:
+        tensor (torch.Tensor): Input tensor (1D).
+        new_tensor_mdlns (torch.Tensor or None): Reconstructed tensor using MDLNS quantization.
+        quant_bits (int or None): Number of bits for uniform quantization (for INT).
+        title (str): Title of the plot.
+        flag (int): If 0, do nothing. If 1, plot the histogram and codeword distributions.
+        save_path (str or None): If provided, saves the figure to this path.
+    """
+    if flag == 0:
+        return
+
+    tensor_np = tensor.cpu().numpy()
+    num_bins = min(50, max(10, tensor_np.shape[0] // 10))  # Adaptive number of bins
+
+    plt.figure(figsize=(10, 5))
+
+    # Plot histogram of the original tensor
+    plt.hist(tensor_np, bins=num_bins, edgecolor='black', alpha=0.6, color='gray', label='Original Tensor')
+
+    x_min, x_max = tensor_np.min(), tensor_np.max()
+    plt.xlim(x_min, x_max)
+
+    hist_max = plt.gca().get_ylim()[1]
+
+    # Plot MDLNS codeword sticks
+    if new_tensor_mdlns is not None:
+        new_mdlns_np = new_tensor_mdlns.cpu().numpy()
+        unique_mdlns_values = np.unique(new_mdlns_np)
+        for x in unique_mdlns_values:
+            #plt.vlines(x, ymin=hist_max * 1.05, ymax=hist_max * 1.25, colors='red', linestyles='solid', linewidth=1)
+            plt.vlines(x, ymin=hist_max * 1.05, ymax=hist_max * 1.15, colors='red', linestyles='solid', linewidth=1)
+
+    # Plot INT uniform codeword sticks
+    if quant_bits is not None:
+        num_codewords = 2 ** quant_bits
+        uniform_codewords = np.linspace(x_min, x_max, num_codewords)
+        for x in uniform_codewords:
+            #plt.vlines(x, ymin=hist_max * 1.30, ymax=hist_max * 1.50, colors='blue', linestyles='dashed', linewidth=1)
+            plt.vlines(x, ymin=hist_max * 1.25, ymax=hist_max * 1.35, colors='blue', linestyles='dashed', linewidth=1)
+
+    plt.title(title)
+    plt.xlabel('Value')
+    plt.ylabel('Frequency')
+    plt.grid(True, linestyle='--', alpha=0.7)
+
+    # plt.legend(["Binned Histogram of Sample First Enhacement Layer Input Tensor", "MDLNS Sweep (2,X) Codewords", "INT Codewords"], loc='center left')
+    # plt.tight_layout()
+
+    # plt.legend(
+    # ["Binned Histogram of Sample First Enhancement Layer Input Tensor", 
+    #     "MDLNS Sweep (2,X) Codewords", 
+    #     "INT Codewords"],
+    # loc='center left',
+    # bbox_to_anchor=(0, 0.5, 0.33, 0.5),
+    # frameon=True,
+    # borderaxespad=0.5,
+    # handletextpad=1.0,
+    # fontsize='small'
+    # )
+
+    # plt.legend(
+    # ["Binned Histogram of Sample\nFirst Enhancement Layer Input Tensor", 
+    #     "MDLNS Sweep (2,X) Codewords", 
+    #     "INT Codewords"],
+    # loc='center left'
+    # )
+
+
+    # Create custom legend handles
+    #hist_handle = mlines.Line2D([], [], color='gray', linewidth=10, label="Binned Histogram of Sample\nFirst Enhancement Layer Input Tensor")
+    hist_handle = mlines.Line2D([], [], color='gray', linewidth=10, label="Binned Histogram of Sample Base Layer Input Tensor")
+    mdlns_handle = mlines.Line2D([], [], color='red', linestyle='solid', linewidth=1, label="MDLNS Sweep (2,X) Codewords")
+    int_handle = mlines.Line2D([], [], color='blue', linestyle='dashed', linewidth=1, label="INT Codewords")
+
+    plt.legend(
+        handles=[hist_handle, mdlns_handle, int_handle],
+        loc='center left'
+    )
+
+
+
+    if save_path is not None:
+        plt.savefig(save_path, dpi=300)
+
+    plt.show()
+
+
+
+# def plot_tensor_histogram(
+#     tensor,
+#     new_tensor_mdlns=None,
+#     quant_bits=None,
+#     title="Tensor Histogram",
+#     flag=1,
+#     save_path=None
+# ):
+#     """
+#     Plots a histogram of the values inside a tensor, and optionally overlays
+#     codeword distributions for INT (uniform) and MDLNS (actual) quantizations
+#     as short sticks stacked above the histogram.
+
+#     Args:
+#         tensor (torch.Tensor): Input tensor (1D).
+#         new_tensor_mdlns (torch.Tensor or None): Reconstructed tensor using MDLNS quantization.
+#         quant_bits (int or None): Number of bits for INT codeword generation (2^quant_bits sticks).
+#         title (str): Title of the plot.
+#         flag (int): If 0, do nothing. If 1, plot the histogram and overlays.
+#         save_path (str or None): If provided, saves the figure to this path.
+#     """
+#     if flag == 0:
+#         return
+
+#     tensor_np = tensor.cpu().numpy()
+#     num_bins = min(50, max(10, tensor_np.shape[0] // 10))  # Adaptive number of bins
+
+#     plt.figure(figsize=(10, 6))
+
+#     # Plot histogram and capture histogram max height
+#     n, bins, patches = plt.hist(tensor_np, bins=num_bins, edgecolor='black', alpha=0.6, color='gray')
+#     hist_max_height = np.max(n)
+
+#     # Fix x-axis range to match tensor
+#     x_min, x_max = tensor_np.min(), tensor_np.max()
+#     plt.xlim(x_min, x_max)
+
+#     # Calculate small offsets
+#     offset_mdlns = hist_max_height * 1.05
+#     offset_int = hist_max_height * 1.15
+#     stick_height = hist_max_height * 0.05  # Short stick
+
+#     # Overlay MDLNS codeword vertical sticks
+#     if new_tensor_mdlns is not None:
+#         new_mdlns_np = new_tensor_mdlns.cpu().numpy()
+#         unique_mdlns_values = np.unique(new_mdlns_np)
+#         for x in unique_mdlns_values:
+#             plt.vlines(x, ymin=offset_mdlns, ymax=offset_mdlns + stick_height, colors='red', linestyles='solid', linewidth=1)
+
+#     # Overlay INT codeword vertical sticks (uniform spacing)
+#     if quant_bits is not None:
+#         num_codewords = 2 ** quant_bits
+#         int_codewords = np.linspace(x_min, x_max, num_codewords)
+#         for x in int_codewords:
+#             plt.vlines(x, ymin=offset_int, ymax=offset_int + stick_height, colors='blue', linestyles='dashed', linewidth=1)
+
+#     # Labels and grid
+#     plt.title(title)
+#     plt.xlabel('Value')
+#     plt.ylabel('Frequency')
+#     plt.grid(True, linestyle='--', alpha=0.7)
+
+#     # Custom legend
+#     custom_lines = [
+#         plt.Line2D([0], [0], color='gray', lw=4, label='Original Tensor Histogram'),
+#         plt.Line2D([0], [0], color='red', lw=2, linestyle='solid', label='MDLNS Codewords'),
+#         plt.Line2D([0], [0], color='blue', lw=2, linestyle='dashed', label='INT Codewords (Uniform)')
+#     ]
+#     plt.legend(handles=custom_lines, loc='center left', bbox_to_anchor=(0.02, 0.5))  # Move legend to middle left
+
+#     plt.tight_layout()
+
+#     if save_path is not None:
+#         plt.savefig(save_path, dpi=300)
+
+#     plt.show()
+
+
+
+# def plot_tensor_histogram(
+#     tensor,
+#     new_tensor_int=None,
+#     new_tensor_mdlns=None,
+#     title="Tensor Histogram",
+#     flag=1,
+#     save_path=None
+# ):
+#     """
+#     Plots a histogram of the values inside a tensor, and optionally overlays
+#     separate codeword distributions for INT and MDLNS quantizations as short
+#     sticks stacked above the histogram.
+
+#     Args:
+#         tensor (torch.Tensor): Input tensor (1D).
+#         new_tensor_int (torch.Tensor or None): Reconstructed tensor using INT quantization.
+#         new_tensor_mdlns (torch.Tensor or None): Reconstructed tensor using MDLNS quantization.
+#         title (str): Title of the plot.
+#         flag (int): If 0, do nothing. If 1, plot the histogram and overlays.
+#         save_path (str or None): If provided, saves the figure to this path.
+#     """
+#     if flag == 0:
+#         return
+
+#     tensor_np = tensor.cpu().numpy()
+#     num_bins = min(50, max(10, tensor_np.shape[0] // 10))  # Adaptive number of bins
+
+#     plt.figure(figsize=(10, 6))
+
+#     # Plot histogram and capture histogram max height
+#     n, bins, patches = plt.hist(tensor_np, bins=num_bins, edgecolor='black', alpha=0.6, color='gray')
+#     hist_max_height = np.max(n)
+
+#     # Fix x-axis range to match tensor
+#     x_min, x_max = tensor_np.min(), tensor_np.max()
+#     plt.xlim(x_min, x_max)
+
+#     # Calculate small offsets
+#     offset_mdlns = hist_max_height * 1.05
+#     offset_int = hist_max_height * 1.15
+#     stick_height = hist_max_height * 0.05  # Short stick
+
+#     # Overlay MDLNS codeword vertical sticks
+#     if new_tensor_mdlns is not None:
+#         new_mdlns_np = new_tensor_mdlns.cpu().numpy()
+#         unique_mdlns_values = np.unique(new_mdlns_np)
+#         for x in unique_mdlns_values:
+#             plt.vlines(x, ymin=offset_mdlns, ymax=offset_mdlns + stick_height, colors='red', linestyles='solid', linewidth=1)
+
+#     # Overlay INT codeword vertical sticks
+#     if new_tensor_int is not None:
+#         new_int_np = new_tensor_int.cpu().numpy()
+#         unique_int_values = np.unique(new_int_np)
+#         for x in unique_int_values:
+#             plt.vlines(x, ymin=offset_int, ymax=offset_int + stick_height, colors='blue', linestyles='dashed', linewidth=1)
+
+#     # Labels and grid
+#     plt.title(title)
+#     plt.xlabel('Value')
+#     plt.ylabel('Frequency')
+#     plt.grid(True, linestyle='--', alpha=0.7)
+
+#     # Custom legend
+#     custom_lines = [
+#         plt.Line2D([0], [0], color='gray', lw=4, label='Original Tensor Histogram'),
+#         plt.Line2D([0], [0], color='red', lw=2, linestyle='solid', label='MDLNS Codewords'),
+#         plt.Line2D([0], [0], color='blue', lw=2, linestyle='dashed', label='INT Codewords')
+#     ]
+#     plt.legend(handles=custom_lines, loc='center left', bbox_to_anchor=(0.02, 0.5))  # Move legend to middle left
+
+#     plt.tight_layout()
+
+#     if save_path is not None:
+#         plt.savefig(save_path, dpi=300)
+
+#     plt.show()
+
+
+
+# import matplotlib.pyplot as plt
+# import torch
+# import numpy as np
+
+# def plot_tensor_histogram(
+#     tensor,
+#     new_tensor_int=None,
+#     new_tensor_mdlns=None,
+#     title="Tensor Histogram",
+#     flag=1,
+#     save_path=None
+# ):
+#     """
+#     Plots a histogram of the values inside a tensor, optionally overlaying
+#     smoothed codeword density curves for INT and MDLNS reconstructions.
+
+#     Args:
+#         tensor (torch.Tensor): Input tensor (1D).
+#         title (str): Title of the plot.
+#         flag (int): If 0, do nothing. If 1, plot the histogram.
+#         save_path (str or None): If provided, saves the figure to this path.
+#         new_tensor_int (torch.Tensor or None): Reconstructed tensor using INT quantization.
+#         new_tensor_mdlns (torch.Tensor or None): Reconstructed tensor using MDLNS quantization.
+#     """
+#     if flag == 0:
+#         return
+
+#     tensor_np = tensor.cpu().numpy()
+#     num_bins = min(50, max(10, tensor_np.shape[0] // 10))  # Adaptive number of bins
+
+#     plt.figure(figsize=(10, 5))
+
+#     # Plot histogram of the original tensor
+#     plt.hist(tensor_np, bins=num_bins, edgecolor='black', alpha=0.6, color='gray', label='Original Tensor')
+
+#     # Overlay INT reconstructed values as smooth density curve
+#     if new_tensor_int is not None:
+#         new_int_np = new_tensor_int.cpu().numpy()
+#         int_density, int_bins = np.histogram(new_int_np, bins=100, range=(tensor_np.min(), tensor_np.max()), density=True)
+#         int_bin_centers = (int_bins[:-1] + int_bins[1:]) / 2
+#         plt.plot(int_bin_centers, int_density, color='blue', linestyle='--', linewidth=2, label='INT Codeword Density')
+
+#     # Overlay MDLNS reconstructed values as smooth density curve
+#     if new_tensor_mdlns is not None:
+#         new_mdlns_np = new_tensor_mdlns.cpu().numpy()
+#         mdlns_density, mdlns_bins = np.histogram(new_mdlns_np, bins=100, range=(tensor_np.min(), tensor_np.max()), density=True)
+#         mdlns_bin_centers = (mdlns_bins[:-1] + mdlns_bins[1:]) / 2
+#         plt.plot(mdlns_bin_centers, mdlns_density, color='red', linestyle='-', linewidth=2, label='MDLNS Codeword Density')
+
+#     plt.title(title)
+#     plt.xlabel('Value')
+#     plt.ylabel('Normalized Density')
+#     plt.grid(True, linestyle='--', alpha=0.7)
+#     plt.legend()
+#     plt.tight_layout()
+
+#     if save_path is not None:
+#         plt.savefig(save_path, dpi=300)
+
+#     plt.show()
+
+
 
 ################################################################
 ################################################################

@@ -24,6 +24,7 @@ import os
 ###############################################
 
 def quantize_per_tensor_mdlns(t, bit=8, first_base=2, sec_base=3, sec_base_bits=3, start=0.1, end=5.0, step=0.1, auto_scale=1, axis=-1):
+    # sec_base of 1000 means sweep
 
     #t_valid = t!=0
     #t_min, t_max =  t[t_valid].min(), t[t_valid].max()
@@ -280,6 +281,7 @@ def get_signed_range(bits):
 ###############################################
 ###############################################
 ###############################################
+#Quantization function of original NeRV paper
 def quantize_per_tensor(t, bit=8, axis=-1):
     if axis == -1:
         t_valid = t!=0
@@ -373,6 +375,7 @@ def all_reduce(tensors, average=True):
 
 #def quantize_to_lns(tensor, bit, lns_base, exp_bits):
 def quantize_per_tensor_lns(tensor, lns_base=2, exp_bits=3):
+    # lns_bases of 1000 means sweep
     
     tensor = tensor.float()
     sign_bit = (tensor < 0).to(torch.uint8)

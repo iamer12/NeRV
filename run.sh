@@ -1,6 +1,11 @@
 
 echo "Running NeRV"
 
+#convert base_layer_histogram.png base_layer_histogram.pdf
+
+#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+# Old Command Lines from original NeRV paper
+#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 #--not_resume_epoch
 # python train_nerv.py -e 100   --lower-width 96 --num-blocks 1 --dataset bunny --frame_gap 1 \
 #     --outf dbg --embed 1.25_40 --stem_dim_num 512_1  --reduction 2  --fc_hw_dim 9_16_26 --expansion 1  \
@@ -22,9 +27,9 @@ echo "Running NeRV"
 #     -b 1  --lr 0.0005 --norm none --suffix 107  --act swish \
 #     --weight checkpoints/nerv_S_pruned.pth --prune_ratio 0.4  --eval_only --quant_bit 8 --quant_axis 0 --num_frames 20
 
-
-# INT
-
+#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+# INT Quantization Command Lines
+#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 ###############
 # python train_nerv.py -e 100   --lower-width 96 --num-blocks 1 --dataset bunny --frame_gap 1 \
 #     --outf dbg --embed 1.25_40 --stem_dim_num 512_1  --reduction 2  --fc_hw_dim 9_16_26 --expansion 1  \
@@ -34,14 +39,17 @@ echo "Running NeRV"
 #     --num_frames 132 --num_prec_layers 2  --quant_bit 6 --quant_bit_enh 5 5 1 --qmode integer \
 #     --dump_images --run_id _1
 
-
+#*************************************
 python train_nerv.py -e 100   --lower-width 96 --num-blocks 1 --dataset bunny --frame_gap 1 \
     --outf dbg --embed 1.25_40 --stem_dim_num 512_1  --reduction 2  --fc_hw_dim 9_16_26 --expansion 1  \
     --single_res --loss Fusion6   --warmup 0. --lr_type cosine  --strides 5 2 2 2 2  --conv_type conv \
     -b 1  --lr 0.0005 --norm none --suffix 107  --act swish \
     --weight checkpoints/nerv_S_pruned.pth --prune_ratio 0.4  --eval_only \
     --num_frames 2 --num_prec_layers 3  --quant_bit 6 --quant_bit_enh 5 5 1 --qmode integer
+    #--plot_enh_quant_abs_error
+    #--plot_base_quant_abs_error
     #--dump_images --run_id _2
+#*************************************
 #     ###############
 
 
@@ -390,8 +398,9 @@ python train_nerv.py -e 100   --lower-width 96 --num-blocks 1 --dataset bunny --
 
 ################################################################
 
-    
-# lns
+#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@    
+# LNS Command Lines
+#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
 # For 2 precision layers, you need at least 4 bits for exponent
                     # For 3 precision layers, you need at least 5 bits for exponent
@@ -600,8 +609,9 @@ python train_nerv.py -e 100   --lower-width 96 --num-blocks 1 --dataset bunny --
 
 ###################################################
 
-
-#minifloat
+#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+#minifloat Command Lines
+#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 #################
 
 ##############
@@ -801,6 +811,9 @@ python train_nerv.py -e 100   --lower-width 96 --num-blocks 1 --dataset bunny --
 #     --minifloat_exp_num_bits 8 4 4 4
 
 #################
+#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+# Misc Command Lines
+#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
 # python train_nerv.py -e 100   --lower-width 96 --num-blocks 1 --dataset bunny --frame_gap 1 \
 #     --outf dbg --embed 1.25_40 --stem_dim_num 512_1  --reduction 2  --fc_hw_dim 9_16_26 --expansion 1  \
@@ -842,9 +855,12 @@ python train_nerv.py -e 100   --lower-width 96 --num-blocks 1 --dataset bunny --
 #     --weight checkpoints/nerv_S.pth --not_resume_epoch --prune_ratio 0.4 
 
 
+#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+# MDLNS Command Lines
+#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+
 # You need more dynamic range as you head towards higher precision layers
 #Evaluate mdlns scalable quantization WITH the sweep feature
-
 
 ######################
 # python train_nerv.py -e 100   --lower-width 96 --num-blocks 1 --dataset bunny --frame_gap 1 \
@@ -886,7 +902,9 @@ python train_nerv.py -e 100   --lower-width 96 --num-blocks 1 --dataset bunny --
 #     --weight checkpoints/nerv_S_pruned.pth --prune_ratio 0.4  --eval_only --quant_axis 0 --num_frames 132 --num_prec_layers 2 --quant_bit_enh 5 5 5 \
 #     --qmode mdlns \
 #     --mdlns_sweep_start 0.25 --mdlns_sweep_end 10.0 --mdlns_sweep_step 0.25 --mdlns_auto_scale 0 \
-#     --mdlns_first_base 2 --mdlns_second_base 1000 --quant_bit 6  --mdlns_second_base_exp_num_bits 2 2 2 2 \
+#     --mdlns_first_base 2 --mdlns_second_base 1000 --quant_bit 6  --mdlns_second_base_exp_num_bits 2 2 2 2
+    #--plot_histogram_enh
+    #--plot_histogram_base
 #     --dump_images --run_id _1
 
 
@@ -900,6 +918,10 @@ python train_nerv.py -e 100   --lower-width 96 --num-blocks 1 --dataset bunny --
 #     --mdlns_first_base 2 --mdlns_second_base 1000 --quant_bit 6  --mdlns_second_base_exp_num_bits 2 2 2 2
 #     --dump_images --run_id _2
 
+
+#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+# Mixed Mode Commans Lines
+#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
 # python train_nerv.py -e 100   --lower-width 96 --num-blocks 1 --dataset bunny --frame_gap 1 \
 #     --outf dbg --embed 1.25_40 --stem_dim_num 512_1  --reduction 2  --fc_hw_dim 9_16_26 --expansion 1  \
@@ -925,7 +947,9 @@ python train_nerv.py -e 100   --lower-width 96 --num-blocks 1 --dataset bunny --
 ######################
 
 
-
+#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+# MDLNS Command Lines Again
+#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
 
 # python train_nerv.py -e 100   --lower-width 96 --num-blocks 1 --dataset bunny --frame_gap 1 \
